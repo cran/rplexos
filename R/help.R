@@ -1,0 +1,41 @@
+#' rplexos: Read and analyze PLEXOS solutions from R
+#'
+#' Read and analyze PLEXOS solutions from R
+#'
+#' The following is the typical workflow:
+#' 
+#' \enumerate{
+#'   \item Organize databases: copy all ZIP file solutions into folders with one scenario per folder
+#'   \item Process folders: convert the ZIP files with \code{\link{process_folder}}
+#'   \item Open databases: create an R object that holds the connections to the SQLite databases with \code{\link{plexos_open}}
+#'   \item Query data: use the functions documented in \code{\link{query_master}} to extract data
+#'   \item Optionally, close databases: to break the connections with \code{\link{plexos_close}} (closing R also works)
+#' }
+#' 
+#' The list of available properties can be seen with \code{\link{query_property}}.
+#'
+#' As an example, let us assume that we created two folders: \code{HiWind} and \code{HiSolar} and put the
+#' data there. To process the folders we use:
+#' 
+#' \code{process_folder(c("HiWind", "HiSolar")}
+#' 
+#' Once they are processed, we can access them by first opening a connection with \code{\link{plexos_open}}.
+#' Scenarios names are defined at this point (if not provided, they default to the folder names).
+#' 
+#' \code{db <- plexos_open(c("HiWind", "HiSolar"), name = c("High Wind", "High Solar")}
+#' 
+#' We can now use the \code{db} object to query and aggregate data, like this
+#' 
+#' \code{result1 <- query_interval(a, "Generators", "NetGeneration")}
+#' 
+#' \code{result2 <- sum_interval(a, "Generators", "CapacityCurtailed", "zone", c("2020-07-01", "2020-07-08"))}
+#' 
+#' \code{result3 <- query_month(a, "Generators", "Generation")}
+#' 
+#' \code{result4 <- query_month(a, "Generators", "UnitsStarted", c("category", "region"))}
+#' 
+#' @docType package
+#' @name rplexos
+#' @import dplyr DBI assertthat RSQLite RSQLite.extfuns
+#' @importFrom Rcpp evalCpp
+NULL
