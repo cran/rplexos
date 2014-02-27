@@ -9,7 +9,7 @@ expand_tkey <- function(tkey) {
     .Call('rplexos_expand_tkey', PACKAGE = 'rplexos', tkey)
 }
 
-new_database <- function(db_file, xml) {
-    .Call('rplexos_new_database', PACKAGE = 'rplexos', db_file, xml)
+process_xml <- function(xml) {
+    .Call('rplexos_process_xml', PACKAGE = 'rplexos', xml)
 }
 

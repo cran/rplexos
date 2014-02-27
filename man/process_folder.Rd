@@ -9,7 +9,7 @@ process_folder(folders = ".", keep.temp = FALSE)
 process_solution(file, keep.temp = FALSE)
 }
 \arguments{
-\item{folders}{Folder or folders to process (default is the working folder)}
+\item{folders}{Folder(s) to process (See details)}
 
 \item{file}{Single PLEXOS solution file to process}
 
@@ -26,6 +26,10 @@ The temporary database contains the original data structure in the PLEXOS soluti
 
 \code{process_folders} is used to process an entire directory. It searches each folder for
 PLEXOS solutions and applies \code{process_solution} to each one of them.
+
+The default folder is the working directory. If the wildcard \code{"*"} is provided, all
+the folders in the working directory will be processed (the list of folders if provided by
+the \code{\link{list_folders}} function).
 }
 \examples{
 \dontrun{process_folder()}

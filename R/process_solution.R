@@ -18,14 +18,10 @@ process_solution <- function(file, keep.temp = FALSE) {
   
   # Does the file need to be reprocessed? Does it already exist?
   if (file.exists(db.temp)) {
-    # Error if file cannot be removed
-    if (!file.remove(db.temp))
-      stop("Unable to delete file: ", db.temp)
+    stop_ifnot_delete(db.temp)
   }
   if (file.exists(db.name)) {
-    # Error if file cannot be removed
-    if (!file.remove(db.name))
-      stop("Unable to delete file: ", db.name)
+    stop_ifnot_delete(db.name)
   }
   
   # Read list of files in the zip file
@@ -54,10 +50,10 @@ process_solution <- function(file, keep.temp = FALSE) {
   
   # Create an empty database and add the XML information
   message("  - Solution: '", file, "'")
-  new_database(db.temp, xml.content)
   
   # Open connection to SQLite for R
-  dbt <- src_sqlite(db.temp)
+  dbt <- src_sqlite(db.temp, create = TRUE)
+  new_database(dbt, xml.content)
   
   # Add a few tables that will be useful later on
   add_extra_tables(dbt)
@@ -248,9 +244,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   
   # Delete temporary database
   if (!keep.temp) {
-    # Error if file cannot be removed
-    if (!file.remove(db.temp))
-      stop("Unable to delete file: ", db.temp)
+    stop_ifnot_delete(db.temp)
   }
   
   # Return the name of the database that was created
@@ -289,8 +283,12 @@ start_db <- function(db, times) {
   
   # Create view for list of properties
   sql <- "CREATE VIEW property AS
-          SELECT DISTINCT collection, property, unit, phase_id, period_type_id AS is_summary
+          SELECT DISTINCT collection, property, unit, phase_id, period_type_id AS is_summary,
+                max(band_id) != min(band_id) AS is_multi_band,
+                max(sample_id) != min(sample_id) AS is_multi_sample,
+                max(timeslice_id) != min(timeslice_id) AS is_multi_timeslice
           FROM key
+          GROUP BY collection, property, unit, phase_id, period_type_id
           ORDER BY period_type_id, collection, property"
   dbGetQuery(db$con, sql)
         
@@ -298,6 +296,38 @@ start_db <- function(db, times) {
   dbGetQuery(db$con, "PRAGMA synchronous = OFF")
   dbGetQuery(db$con, "PRAGMA journal_mode = MEMORY")
   dbGetQuery(db$con, "PRAGMA temp_store = MEMORY")
+}
+
+# Populate new database with XML contents
+new_database <- function(db, xml) {
+  # Read XML and convert to a list
+  xml.list <- process_xml(xml)
+  
+  # Turn PRAGMA OFF
+  dbGetQuery(db$con, "PRAGMA synchronous = OFF");
+  dbGetQuery(db$con, "PRAGMA journal_mode = MEMORY");
+  dbGetQuery(db$con, "PRAGMA temp_store = MEMORY");
+  
+  # Create data tables
+  for (i in 0:4) {
+    sql <- sprintf("CREATE TABLE t_data_%s (key_id integer, period_id integer, value double)", i)
+    dbGetQuery(db$con, sql)
+  }
+  
+  # Create phase tables
+  for (i in 0:4) {
+    sql <- sprintf("CREATE TABLE t_phase_%s (interval_id integer, period_id integer)", i)
+    dbGetQuery(db$con, sql)
+  }
+  
+  # Create t_key_index table
+  dbGetQuery(db$con, "CREATE TABLE t_key_index (key_id integer, period_type_id integer, position long, length integer, period_offset integer)");
+  
+  # Write tables from XML file
+  for (t in names(xml.list))
+    dbWriteTable(db$con, t, xml.list[[t]], append = TRUE, row.names = FALSE)
+  
+  0
 }
 
 # Add a few tables that will be useful later on
@@ -311,15 +341,12 @@ add_extra_tables <- function(db) {
           ON c2.class_id == c1.parent_class_id"
   col <- dbGetQuery(db$con, sql)
   
-  col$name            <- clean_string(col$name)
-  col$complement_name <- clean_string(col$complement_name)
-  col$parent_class    <- clean_string(col$parent_class)
+  col$name         <- safe_clean_string(col, "name")
+  col$parent_class <- safe_clean_string(col, "parent_class")
 
   col$full_name <- col$name
   sel <- col$parent_class != "System"
   col$full_name[sel] <- paste(col$parent_class, col$name, sep = "_")[sel]
-  sel <- col$complement_name != ""
-  col$full_name[sel] <- paste(col$complement_name, col$name, sep = "_")[sel]
 
   dbWriteTable(db$con, "nrel_collection", col)
   
@@ -343,7 +370,7 @@ add_extra_tables <- function(db) {
   
   # Add region and zone to memberships
   regs.col <- tbl(db, "nrel_collection") %>%
-              filter(name == "Generators", complement_name == "Regions") %>%
+              filter(name == "Generators", parent_class == "Region") %>%
               select(collection_id)
   col.id <- collect(regs.col)$collection_id[1]
   sql <- "CREATE TABLE nrel_membership AS
@@ -364,8 +391,8 @@ add_extra_tables <- function(db) {
           INNER JOIN t_unit su
           ON p.summary_unit_id = su.unit_id"
   prop <- dbGetQuery(db$con, sql)
-  prop$name         <- clean_string(prop$name)
-  prop$summary_name <- clean_string(prop$summary_name)
+  prop$name         <- safe_clean_string(prop, "name")
+  prop$summary_name <- safe_clean_string(prop, "summary_name")
   dbWriteTable(db$con, "nrel_property", prop)
   
   # Create tables to hold interval, day, week, month, and yearly timestamps

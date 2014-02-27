@@ -6,12 +6,14 @@
 plexos_open(folders = ".", names = folders)
 }
 \arguments{
-\item{folders}{Character of folder name(s) where the data is located (each folder represents a scenario)}
+\item{folders}{character. Folder(s) where the data is located (each folder represents a scenario)}
 
-\item{names}{Scenario names}
+\item{names}{character. Scenario names}
 }
 \description{
-Open all PLEXOS databases
+The default for \code{folders} is the working directory. If the wildcard \code{"*"} is provided, all
+the folders in the working directory will be processed (the list of folders if provided by
+the \code{\link{list_folders}} function).
 }
 \seealso{
 \code{\link{plexos_close}}

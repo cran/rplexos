@@ -47,7 +47,7 @@ sum_year(db, ...)
 
 \item{col}{character. Collection to query}
 
-\item{prop}{character. Property to query}
+\item{prop}{character vector. Property or properties to query}
 
 \item{columns}{character. Data columns to query or aggregate by (defaults to \code{name})}
 
@@ -103,6 +103,9 @@ databases within the same scenario have overlapping time periods, the default is
 data from the last database (execute \code{summary(db)} so see the order). To change this behavior
 set the global option \code{rplexos.tiebreak} to \code{first}, \code{last}, or \code{all} to
 select data from the first database, the last one or keep all of them.
+
+Multiple properties can be queried within a collection. If \code{prop} equals the widcard
+\code{"*"}, all the properties within a collection are returned.
 }
 \seealso{
 \code{\link{plexos_open}} to create the PLEXOS database object

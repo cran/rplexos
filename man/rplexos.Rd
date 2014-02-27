@@ -20,24 +20,6 @@ The following is the typical workflow:
 
 The list of available properties can be seen with \code{\link{query_property}}.
 
-As an example, let us assume that we created two folders: \code{HiWind} and \code{HiSolar} and put the
-data there. To process the folders we use:
-
-\code{process_folder(c("HiWind", "HiSolar")}
-
-Once they are processed, we can access them by first opening a connection with \code{\link{plexos_open}}.
-Scenarios names are defined at this point (if not provided, they default to the folder names).
-
-\code{db <- plexos_open(c("HiWind", "HiSolar"), name = c("High Wind", "High Solar")}
-
-We can now use the \code{db} object to query and aggregate data, like this
-
-\code{result1 <- query_interval(a, "Generators", "NetGeneration")}
-
-\code{result2 <- sum_interval(a, "Generators", "CapacityCurtailed", "zone", c("2020-07-01", "2020-07-08"))}
-
-\code{result3 <- query_month(a, "Generators", "Generation")}
-
-\code{result4 <- query_month(a, "Generators", "UnitsStarted", c("category", "region"))}
+An example of this workflow is available in the "Getting started" vignette.
 }
 

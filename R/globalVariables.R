@@ -1,3 +1,4 @@
-globalVariables(c("name", "complement_name", "collection_id",
+globalVariables(c("name", "parent_class", "collection_id",
   "position", "scenario", "phase_id", "period_id", "nrel_time",
-  "key", "value"))
+  "key", "value", ".", "filename", "property", "is_multi_band",
+  "is_multi_sample", "is_multi_timeslice", "db", "folder"))

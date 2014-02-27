@@ -3,59 +3,30 @@ clean_string <- function(x) {
   gsub(" |&|'|-", "", x)
 }
 
+# Same as clean_string, but makes sure that column exists
+safe_clean_string <- function(x, column) {
+  if (column %in% names(x)) {
+    out <- clean_string(x[, column])
+  } else {
+    out <- rep("", nrow(x))
+  }
+  
+  out
+}
+
+# Delete file and give error if unsuccesfull
+stop_ifnot_delete <- function(x) {
+  # Error if file cannot be removed
+  if (!file.remove(x))
+    stop("Unable to delete file: ", x, call. = FALSE)
+}
+
 # Regroup with characters
 regroup_char <- function(x, vars, ...) {
   vars2 <- lapply(vars, as.symbol)
   regroup(x, vars2, ...)
 }
 
-# Fast version of llply that adds scenario
-#' @importFrom plyr llply
-fast_ldply <- function(db, ..., filter.repeats = FALSE) {
-  out <- llply(db, ..., .progress = "none")
-  for (i in names(out)) {
-    if (nrow(out[[i]])) {
-      out[[i]]$scenario <- db[[i]]$scenario
-      if (filter.repeats)
-        out[[i]]$position <- db[[i]]$position
-    }
-  }
-  out2 <- rbind_all(out)
-  
-  if (filter.repeats) {
-    # Get option to see how to deal with ties (defaults to last)
-    tieopt <- getOption("rplexos.tiebreak")
-    if (is.null(tieopt)) {
-      tieopt <- "last"
-    } else if (!tieopt %in% c("first", "last", "all")) {
-      warning("Invalid 'rplexos.tiebreak' option (must be one of: first, last, all). Using last instead")
-      tieopt <- "last"
-    }
-    
-    if (tieopt %in% c("first", "last")) {
-      # Group by time
-      out2 <- out2 %>%
-        group_by(time)
-    
-      if (tieopt == "last") {
-        # If there are repeats, use the latter entry
-        out2 <- out2 %>%
-          filter(position == max(position))
-      } else {
-        # If there are repeats, use the latter entry
-        out2 <- out2 %>%
-          filter(position == min(position))
-      }
-      
-      # Ungroup and delete path column
-      out2 <- out2 %>%
-        ungroup() %>%
-        select(-position)
-    }
-  }
-  
-  out2
-}
 
 #' Get list of valid columns
 #'
@@ -67,23 +38,21 @@ fast_ldply <- function(db, ..., filter.repeats = FALSE) {
 valid_columns <- function() c("collection", "property", "name", "parent", "category", "region", "zone",
                               "period_type_id", "band_id", "sample_id", "timeslice_id", "time")
 
+#' Get list of folders in the working directory
+#'
+#' List of existing folders in the working directory. This function is used when the wildcard symbol (\code{"*"})
+#' is provided to the \code{\link{process_folder}} and \code{\link{plexos_open}} functions.
+#'
+#' @seealso \code{\link{setwd}}, \code{\link{process_folder}}, \code{\link{plexos_open}}
+#'
+#' @export
+list_folders <- function() {
+  f <- dir()
+  f[file.info(f)$isdir]
+}
+
 
 # *** assert_that validation functions ***
-
-# Check that property is valid
-property_exists <- function(d, table, col, prop) {
-  is.summ <- ifelse(table == "interval", 0, 1)
-  q <- sprintf("SELECT * from property
-               WHERE collection = '%s' AND property = '%s' AND is_summary = %s",
-               col, prop, is.summ)
-  res <- query_scenario(d, q)
-  nrow(res) == length(d)
-}
-
-on_failure(property_exists) <- function(call, env) {
-  paste0("Property '", eval(call$prop, env), "' in collection '", eval(call$col, env),
-         "' is not valid. Use query_property() for list of properties.")
-}
 
 # Check that columns are valid
 are_columns <- function(col) all(col %in% valid_columns())
@@ -110,7 +79,7 @@ on_failure(time_not_a_name) <- function(call, env) {
 is.rplexos <- function(x) inherits(x, "rplexos")
 
 on_failure(is.rplexos) <- function(call, env) {
-  paste0("Invalid database object provided. 'db' should be created with plexos_open().")
+  paste0(eval(call$x, env), " is not a valid database object. 'db' should be created with plexos_open().")
 }
 
 # Check date range inputs

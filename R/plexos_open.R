@@ -1,60 +1,94 @@
 #' Open all PLEXOS databases
 #' 
-#' @param folders Character of folder name(s) where the data is located (each folder represents a scenario)
-#' @param names Scenario names
+#' The default for \code{folders} is the working directory. If the wildcard \code{"*"} is provided, all
+#' the folders in the working directory will be processed (the list of folders if provided by
+#' the \code{\link{list_folders}} function).
+#' 
+#' @param folders character. Folder(s) where the data is located (each folder represents a scenario)
+#' @param names character. Scenario names
 #'
 #' @seealso \code{\link{plexos_close}}
 #' @seealso \code{\link{query_master}}
 #' 
 #' @export
-#' @importFrom plyr ldply
 plexos_open <- function(folders = ".", names = folders) {
   # Check inputs
   assert_that(is.character(folders), is.character(folders))
-  assert_that(length(folders) == length(names))
   
-  # Change default scenario name to something better than '.'
-  if ((folders == ".") & (names == "."))
-    names <- "default"
-  
-  # Get database file names
-  db.name <- lapply(folders, list.files, pattern = ".db$", full.names = TRUE)
-  
-  # Check if folders were empty
-  if (min(sapply(db.name, length)) == 0L)
-    stop("No databases found in the list of folders. Did you forget to use process_folder()?")
-  
-  for (i in names(db.name)) {
-    if (length(db.name[[i]]) == 0) {
-      warning("No databases found in folder: ", i)
+  # Check for wildcard
+  if (length(folders) == 1) {
+    if (folders == "*") {
+      folders <- list_folders()
+      names <- folders
     }
   }
   
-  # Convert into a data.frame
-  names(db.name) <- names
-  attr(db.name, "split_type") <- "data.frame"
-  attr(db.name, "split_labels") <- data.frame(scenario = factor(names, levels = names))
-  make_col <- function(x) data.frame(db = x)
-  db.name2 <- ldply(db.name, make_col)
-  db.name3 <- db.name2 %>% group_by(scenario) %>%
-    mutate(position = 1:n())
+  # Check that folder and names have the same length
+  assert_that(length(folders) == length(names))
   
-  # Open databases
-  out <- lapply(as.character(db.name2$db), src_sqlite)
-  names(out) <- db.name2$db
-  attr(out, "split_type") <- "data.frame"
-  attr(out, "split_labels") <- data.frame(db = db.name2["scenario"])
-  
-  # Add scenario to each database object
-  for (i in 1:nrow(db.name2)) {
-    out[[i]]$scenario <- db.name2[i, "scenario"]
-    out[[i]]$position <- db.name3[i, "position"]
+  # Change default scenario name to something better than '.'
+  if (length(folders) == 1) {
+    if ((folders == ".") & (names == ".")) {
+      names <- "default"
+    }
   }
   
+  plexos_list_files <- function(df) {
+  filename <- list.files(df$folder %>% as.character,
+                         pattern = ".db$", full.names = TRUE)
+  if (length(filename) == 0)
+    return(data.frame())
+
+  data.frame(folder = df$folder,
+             scenario = df$scenario,
+             filename)
+}
+  
+  # Get database file names
+  df <- data.frame(folder = folders,
+                   scenario = factor(names, levels = names)) %>%
+        group_by(folder, scenario) %>%
+        do(data.frame(filename = list.files(.$folder %>% as.character,
+                                            pattern = ".db$", full.names = TRUE))) %>%
+        ungroup() %>%
+        mutate(position = 1:n())
+  
+  # Error if all folders were empty
+  if (nrow(df) == 0L)
+    stop("No databases found in the list of folders.\n",
+         "Did you forget to use process_folder()?",
+         call. = FALSE)
+  
+  # Check for folders without databases
+  folder.missing <- setdiff(folders, df$folder)
+  if (length(folder.missing) > 0L) {
+    warning("No databases found in folder",
+            ifelse(length(folder.missing) == 1L, ": ", "s: "),
+            paste(folder.missing, collapse = ", "),
+            call. = FALSE)
+  }
+  
+  # Open databases
+  out <- df %>%
+    group_by(scenario, position, filename) %>%
+    do(db = src_sqlite(as.character(.$filename)))
+  
   # Add rplexos class to object
-  class(out) <- c("rplexos", class(out))
+  class(out) <- c("rplexos", setdiff(class(out), "rowwise_df"))
   
   out
+}
+
+# List all PLEXOS database files in a folder
+plexos_list_files <- function(df) {
+  filename <- list.files(df$folder %>% as.character,
+                         pattern = ".db$", full.names = TRUE)
+  if (length(filename) == 0)
+    return(data.frame())
+
+  data.frame(folder = df$folder,
+             scenario = df$scenario,
+             filename)
 }
 
 
@@ -68,12 +102,13 @@ plexos_open <- function(folders = ".", names = folders) {
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #'
 #' @export
-#' @importFrom plyr l_ply
 plexos_close <- function(db) {
   assert_that(is.rplexos(db))
 
   # For each database, close the connection
-  l_ply(db, function(x) dbDisconnect(x$con))
+  db %>%
+    rowwise() %>%
+    do(result = dbDisconnect(.$db$con))
   
   # Remove object from memory
   rm(list = deparse(substitute(db)), envir = sys.frame(-1))
@@ -84,27 +119,26 @@ plexos_close <- function(db) {
 # Create custom summary for rplexos objects
 #' @export
 #' @method summary rplexos
-#' @importFrom plyr ldply
-#' @importFrom reshape2 dcast
 summary.rplexos <- function(object, ...) {
-  info <- ldply(object, function(y) data.frame(position = y$position,
-                                               scenario = y$scenario,
-                                               path     = y$path,
-                                               tables   = length(src_tbls(y))))
+  info <- object %>%
+    group_by(position, scenario, filename) %>%
+    summarise(tables = length(src_tbls(db[[1]]))) %>%
+    as.data.frame
+  
   print(info, row.names = FALSE)
 }
 
 # Create custom visualization for rplexos objects
 #' @export
-#' @importFrom plyr ldply
 #' @importFrom reshape2 dcast
 print.rplexos <- function(x, ...) {
   cat("Structure:\n")
   summary(x)
   
   cat("\nTables:\n")
-  info <- ldply(x, function(y) data.frame(position = y$position,
-                                          table    = src_tbls(y)))
+  info <- x %>%
+    group_by(position) %>%
+    do(data.frame(table = src_tbls(.$db[[1]])))
   
   print(dcast(info, table ~ position, fun.aggregate = length, value.var = "table"),
         row.names = FALSE)

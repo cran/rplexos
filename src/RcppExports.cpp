@@ -36,16 +36,15 @@ BEGIN_RCPP
     return __sexp_result;
 END_RCPP
 }
-// new_database
-int new_database(std::string db_file, std::string xml);
-RcppExport SEXP rplexos_new_database(SEXP db_fileSEXP, SEXP xmlSEXP) {
+// process_xml
+Rcpp::List process_xml(std::string xml);
+RcppExport SEXP rplexos_process_xml(SEXP xmlSEXP) {
 BEGIN_RCPP
     SEXP __sexp_result;
     {
         Rcpp::RNGScope __rngScope;
-        Rcpp::traits::input_parameter< std::string >::type db_file(db_fileSEXP );
         Rcpp::traits::input_parameter< std::string >::type xml(xmlSEXP );
-        int __result = new_database(db_file, xml);
+        Rcpp::List __result = process_xml(xml);
         PROTECT(__sexp_result = Rcpp::wrap(__result));
     }
     UNPROTECT(1);
