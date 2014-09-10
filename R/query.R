@@ -32,6 +32,10 @@ get_table_scenario <- function(db, from, columns = c("scenario", "position")) {
 
 # Correctly get query for a row (won't be necessary with future version of dplyr)
 get_table_one_scenario <- function(db, from, columns) {
+  # Check that table exists
+  if (!from %in% src_tbls(db$db)) {
+    return(data.frame())
+  }
   res <- tbl(db$db, from) %>% collect
   if (nrow(res) == 0)
     return(data.frame())
@@ -50,15 +54,14 @@ get_table_one_scenario <- function(db, from, columns) {
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #'
 #' @export
-#' @importFrom reshape2 dcast
 query_property <- function(db) {
   out <- get_table_scenario(db, "property")
   phases <- c("LT", "PASA", "MT", "ST")
   phases.df <- data.frame(phase_id = 1:4, phase = factor(phases, levels = phases))
   out %>%
     inner_join(phases.df, by = "phase_id") %>%
-    dcast(phase_id + phase + is_summary + class_group + class + collection + property + unit ~ scenario,
-          length, value.var = "unit")
+    reshape2::dcast(phase_id + phase + is_summary + class_group + class + collection + property + unit ~ scenario,
+                    length, value.var = "unit")
 }
 
 
@@ -73,10 +76,9 @@ query_property <- function(db) {
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #'
 #' @export
-#' @importFrom reshape2 dcast
 query_config <- function(db) {
   data <- get_table_scenario(db, "config", columns = c("scenario", "position", "filename"))
-  dcast(data, position + scenario + filename ~ element, value.var = "value")
+  reshape2::dcast(data, position + scenario + filename ~ element, value.var = "value")
 }
 
 #' Query log file information
@@ -146,6 +148,10 @@ query_log_steps <- function(db) {
 #' Multiple properties can be queried within a collection. If \code{prop} equals the widcard
 #' \code{"*"}, all the properties within a collection are returned.
 #' 
+#' The parameter \code{multiply.time} allows to multiply values by interval duration (in hours) when
+#' doing the sum of interval data. This can be used, for example, to obtain total energy (in MWh)
+#' from power time series (in MW).
+#' 
 #' @param db PLEXOS database object
 #' @param time character. Table to query from (interval, day, week, month, year)
 #' @param col character. Collection to query
@@ -154,6 +160,7 @@ query_log_steps <- function(db) {
 #' @param time.range character. Range of dates (Give in 'ymdhms' or 'ymd' format)
 #' @param filter list. Used to filter by data columns (see details)
 #' @param phase integer. PLEXOS optimization phase (1-LT, 2-PASA, 3-MT, 4-ST)
+#' @param multiply.time boolean. When summing interval data, provide the value multiplied by interval duration (See details).
 #' @param ... parameters passed from shortcut functions to master (all except \code{time})
 #' 
 #' @return A data frame that contains data summarized/aggregated by scenario.
@@ -203,7 +210,7 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
   
   # Check if any scenario is missing from the results
   missing.scenario <- setdiff(unique(db$scenario), unique(out$scenario))
-  if (length(missing.scenario) > 0) {
+  if (length(missing.scenario) > 0L) {
     warning("Query returned no results for scenarios: ",
             paste(missing.scenario, collapse = ", "),
             call. = FALSE)
@@ -272,7 +279,6 @@ query_month    <- function(db, ...) query_master(db, "month", ...)
 query_year     <- function(db, ...) query_master(db, "year", ...)
 
 # Query interval for each database
-#' @importFrom lubridate ymd_hms
 #' @importFrom data.table data.table CJ
 query_master_each <- function(db, time, col, prop, columns, time.range, filter, phase, table.name) {
   # Divide time.range vector
@@ -312,7 +318,7 @@ query_master_each <- function(db, time, col, prop, columns, time.range, filter, 
     out <- out %>%
       select_(.dots = columns.dots) %>%
       collect %>%
-      mutate(time = ymd_hms(time, quiet = TRUE))
+      mutate(time = lubridate::ymd_hms(time, quiet = TRUE))
     
     return(out)
   }
@@ -323,14 +329,24 @@ query_master_each <- function(db, time, col, prop, columns, time.range, filter, 
     collect
   the.table.name <- gsub("data_interval_", "", t.name$table_name)
   
+  # Get max/min time existing in the table to be queried
+  #   In case time table has more time stamps than those in the dataset
+  time.limit <- tbl(db, the.table.name) %>%
+      filter(phase_id == phase) %>%
+      summarize(time_from = min(time_from), time_to = max(time_to)) %>%
+      collect
+  min.time.data <- time.limit$time_from
+  max.time.data <- time.limit$time_to
+  
   # Interval data, Get time data
-  time.data <- tbl(db, "time")
+  time.data <- tbl(db, "time") %>%
+    filter(between(time, min.time.data, max.time.data))
   
   # Get interval data
   out <- tbl(db, the.table.name) %>%
-      filter(phase_id == phase) %>%
-      select(-time_to) %>%
-      rename(time = time_from)
+    filter(phase_id == phase) %>%
+    select(-time_to) %>%
+    rename(time = time_from)
   
   # Add time filter conditions
   if (!is.null(time.range)) {
@@ -351,7 +367,7 @@ query_master_each <- function(db, time, col, prop, columns, time.range, filter, 
     return(data.frame())
   
   # Convert into R time-data format
-  time.data$time <- ymd_hms(time.data$time)
+  time.data$time <- lubridate::ymd_hms(time.data$time)
     
   # Add key, time and value columns
   columns.dots <- c("key", "unit", setdiff(columns, "time"), "time", "value") %>%
@@ -362,7 +378,7 @@ query_master_each <- function(db, time, col, prop, columns, time.range, filter, 
   out <- out %>%
     select_(.dots = columns.dots) %>%
     collect %>%
-      mutate(time = ymd_hms(time, quiet = TRUE))
+      mutate(time = lubridate::ymd_hms(time, quiet = TRUE))
   
   # Expand data
   #   This will be easier when dplyr supports rolling joins
@@ -385,7 +401,10 @@ query_master_each <- function(db, time, col, prop, columns, time.range, filter, 
 
 #' @rdname query_master
 #' @export
-sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4) {
+sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4, multiply.time = FALSE) {
+  # Check inputs to unique
+  assert_that(is.flag(multiply.time))
+
   # Make sure to include time
   columns2 <- c(setdiff(columns, "time"), "time")
   
@@ -399,6 +418,30 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
   # Aggregate the data
   out <- df %>% group_by_char(c("scenario", "collection", "property", columns2)) %>%
     summarise(value = sum(value))
+  
+  if ((time == "interval") & multiply.time) {
+    # Get length of intervals in hours
+    times <- get_table_scenario(d, "time", "scenario")
+    delta <- times %>%
+      group_by(scenario) %>%
+      mutate(time = lubridate::ymd_hms(time)) %>%
+      summarize(interval = min(lubridate::int_length(lubridate::int_diff(time))) / 3600)
+    
+    # Add interval duration to the sum
+    out <- out %>%
+      inner_join(delta, by = "scenario") %>%
+      summarise(value = sum(value * interval))  
+    
+    # If unit is a column, modify column
+    if ("unit" %in% names(out)) {
+      out <- out %>%
+        mutate(unit = paste(unit, "* h"))
+    }
+  } else {
+    # Sum values
+    out <- out %>%
+      summarise(value = sum(value))  
+  }
   
   # Convert columns to factors
   for (i in setdiff(columns2, "time"))
@@ -424,7 +467,6 @@ sum_month    <- function(db, ...) sum_master(db, "month", ...)
 sum_year     <- function(db, ...) sum_master(db, "year", ...)
 
 # Checks and common data maniputation for query_master and sum_master
-#' @importFrom lubridate parse_date_time
 master_checks <- function(db, time, col, prop, columns, time.range, filter, phase) {
   # Get list of properties for the collection
   is.summ <- ifelse(time == "interval", 0, 1)
@@ -441,18 +483,18 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
   }
   
   # Checks if property is the wildcard symbol
-  if (length(prop) == 1) {
+  if (length(prop) == 1L) {
     if (prop == "*")
       prop <- unique(res$property)
   }
   
   # Check that all properties are valid
   invalid.prop <- setdiff(prop, res$property)
-  if (length(invalid.prop) == 1) {
+  if (length(invalid.prop) == 1L) {
     stop("Property '", invalid.prop, "' in collection '", col, "' is not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
          "   Use query_property() for list of available collections and properties.",
          call. = FALSE)
-  } else if (length(invalid.prop) > 1) {
+  } else if (length(invalid.prop) > 1L) {
     stop("Properties ", paste0("'", invalid.prop, "'", collapse = ", "), " in collection '", col,
          "' are not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
          "   Use query_property() for list of available collections and properties.",
@@ -489,8 +531,8 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
   
   # Time range checks and convert to POSIXct
   if (!is.null(time.range)) {
-    assert_that(is.character(time.range), length(time.range) == 2)
-    time.range <- parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
+    assert_that(is.character(time.range), length(time.range) == 2L)
+    time.range <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
     assert_that(correct_date(time.range))
   }
   
@@ -505,7 +547,7 @@ filter_rplexos <- function(out, filt) {
   # Do nothing if filter is empty
   if (is.null(filt))
     return(out)
-  if (length(filt) == 0)
+  if (length(filt) == 0L)
     return(out)
   
   # Write the condition as text

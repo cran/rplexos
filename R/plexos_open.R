@@ -16,7 +16,7 @@ plexos_open <- function(folders = ".", names = folders) {
   assert_that(is.character(folders), is.character(names), is_folder(folders))
   
   # Check for wildcard
-  if (length(folders) == 1) {
+  if (length(folders) == 1L) {
     if (folders == "*") {
       folders <- list_folders()
       names <- folders
@@ -27,7 +27,7 @@ plexos_open <- function(folders = ".", names = folders) {
   assert_that(length(folders) == length(names))
   
   # Change default scenario name to something better than '.'
-  if (length(folders) == 1) {
+  if (length(folders) == 1L) {
     if ((folders == ".") & (names == ".")) {
       names <- "default"
     }
@@ -139,12 +139,19 @@ summary.rplexos <- function(object, ...) {
     summarise(tables = length(src_tbls(db[[1]]))) %>%
     as.data.frame
   
-  print(info, row.names = FALSE)
+  # Query config to get rplexos and PLEXOS version
+  conf <- query_config(object) %>%
+    select(position, PLEXOS = Version, rplexos)
+  
+  # Join the two tables
+  info2 <- info %>% inner_join(conf, by = "position")
+  
+  # Print table
+  print(info2, row.names = FALSE)
 }
 
 # Create custom visualization for rplexos objects
 #' @export
-#' @importFrom reshape2 dcast
 print.rplexos <- function(x, ...) {
   cat("Structure:\n")
   summary(x)
@@ -154,7 +161,7 @@ print.rplexos <- function(x, ...) {
     group_by(position) %>%
     do(data.frame(table = src_tbls(.$db[[1]])))
   
-  print(dcast(info, table ~ position, fun.aggregate = length, value.var = "table"),
+  print(reshape2::dcast(info, table ~ position, fun.aggregate = length, value.var = "table"),
         row.names = FALSE)
 }
 

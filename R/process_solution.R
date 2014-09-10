@@ -8,7 +8,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   
   # Check that file exists
   if (!file.exists(file)) {
-    warning(file, " does not exist and was ignored.", call. = FALSE)
+    warning(file, " does not exist and was ignored.", call. = FALSE, immediate. = TRUE)
     return(invisible(""))
   }
 
@@ -30,19 +30,48 @@ process_solution <- function(file, keep.temp = FALSE) {
   # Check that zip file has valid XML, Log and BIN files
   xml.pos <- grep("^Model.*xml$", zip.content$Name)
   bin.pos <- grep("^t_data_[0-4].BIN$", zip.content$Name)
-  log.pos <- grep("^Model.*Log.txt$", zip.content$Name)
-  if ((length(xml.pos) == 0) | (length(bin.pos) == 0) | (length(log.pos) == 0)) {
-    warning(file, " is not a PLEXOS solution file and was ignored.", call. = FALSE)
+  log.pos <- grep("^Model.*Log.*.txt$", zip.content$Name)
+  if ((length(xml.pos) == 0L) | (length(bin.pos) == 0L) | (length(log.pos) == 0L)) {
+    # If in debug mode, give some more explanation
+    if (length(xml.pos) == 0L)
+      rplexos_message("No XML file found in file ", file)
+    if (length(bin.pos) == 0L)
+      rplexos_message("No BIN file found in file ", file)
+    if (length(log.pos) == 0L)
+      rplexos_message("No LOG file found in file ", file)
+    
+    warning(file, " is not a PLEXOS solution file and was ignored.", call. = FALSE, immediate. = TRUE)
     return(invisible(""))
   }
   
+  # Check if the interval binary file is not being read correctly within the zip file
+  #   This seems to happen when R is using 32-bit versions of the zip libraries
+  #   No clear solution as to how to solve this yet
+  bin.int.pos <- grep("^t_data_0", zip.content$Name)
+  if (length(bin.int.pos) == 1L) {
+    if (zip.content$Length[bin.int.pos] == (2^32 - 1)) {
+      warning("Skipped file ", file, "\n",
+              "  Interval data is too large and cannot be processed in Mac/Linux.\n",
+              "  Reduce number of outputs in PLEXOS or process with the 64-bit Windows version of R.\n",
+              "  No need to report this message; we are working on a solution.",
+              call. = FALSE, immediate. = TRUE)
+      
+      return(invisible(""))
+    }
+  }
+  
   # Read content from the XML file
-  xml.content <- read_file_in_zip(file, xml.pos)
+  xml.content <- NULL
+  try(xml.content <- read_file_in_zip(file, xml.pos), silent = !getOption("rplexos.debug"))
+  if (is.null(xml.content)) {
+    stop("Error reading XML file into memory", call. = FALSE)
+  }
   
   # Check that XML is a valid PLEXOS file
   plexos.check <- grep("SolutionDataset", xml.content)
-  if (length(plexos.check) == 0) {
-    warning(file, " is not a PLEXOS database and was ignored.", call. = FALSE)
+  if (length(plexos.check) == 0L) {
+    rplexos_message("Invalid XML content in ", file)
+    warning(file, " is not a PLEXOS database and was ignored.", call. = FALSE, immediate. = TRUE)
     return(invisible(""))
   }
   
@@ -60,6 +89,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   add_extra_tables(dbt)
   
   # Create SQLite database to store final results
+  rplexos_message("Creating final database and adding basic data")
   dbf <- src_sqlite(db.name, create = TRUE)
   
   # Store time stamps
@@ -124,6 +154,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   view.k2 <- paste(view.k, collapse = ", ")
   
   # For each summary time, create a table and a view
+  rplexos_message("Creating data tables and views")
   times <- c("day", "week", "month", "year")
   for (i in times) {
     sql <- sprintf("CREATE TABLE data_%s (key integer, time real, value double)", i);
@@ -140,7 +171,7 @@ process_solution <- function(file, keep.temp = FALSE) {
           FROM key
           WHERE period_type_id = 0"
   props <- dbGetQuery(dbf$con, sql)
-
+  
   for (p in props$table_name) {
     sql <- sprintf("CREATE TABLE '%s' (key INT, time_from INT, time_to INT, value DOUBLE)", p)
     dbGetQuery(dbf$con, sql)
@@ -179,153 +210,137 @@ process_solution <- function(file, keep.temp = FALSE) {
   # Add binary data
   for (period in 0:4) {
     # Check if binary file exists, otherwise, skip this period
+    period.name <- ifelse(period == 0, "interval", times[period])
     bin.name <- sprintf("t_data_%s.BIN", period)
     if(!bin.name %in% zip.content$Name)
       next
     bin.con <- unz(file, bin.name, open = "rb")
     
+    # Print debug message
+    rplexos_message("Reading ", period.name, " binary data")
+    
     # Check if length in t_key_index is correct
     correct.length <- correct_length(dbt, period)
     
-    if (period > 0) {
-      # Read t_key_index entries for current period
-      sql <- sprintf("SELECT tki.key_id, nk.phase_id, tki.period_offset, tki.length
-                      FROM t_key_index tki
-                      JOIN temp_key nk
-                      ON tki.key_id = nk.[key]
-                      WHERE tki.period_type_id = %s
-                      ORDER BY tki.position", period)
-      t.key <- dbGetQuery(dbt$con, sql) %>%
-        mutate(phase_id = as.integer(phase_id))
+    # Read time data
+    t.time <- tbl(dbt, sprintf("temp_period_%s", period)) %>%
+      arrange(phase_id, period_id) %>%
+      select(phase_id, period_id, time, interval_id) %>%
+      collect()
+    
+    # Read t_key_index entries for period data
+    sql <- sprintf("SELECT nk.[key], nk.phase_id, nk.table_name, tki.period_offset, tki.length
+                    FROM t_key_index tki
+                    JOIN temp_key nk
+                    ON tki.key_id = nk.[key]
+                    WHERE tki.period_type_id = %s
+                    ORDER BY tki.position", period)
+    tki <- dbSendQuery(dbt$con, sql)
+    
+    # All the data is inserted in one transaction
+    dbBegin(dbf$con)
       
+    # Read one row from the query
+    num.rows <- ifelse(period == 0, 1, 1000)
+    trow <- dbFetch(tki, num.rows)
+    num.read <- 0
+    
+    # Iterate through the query results
+    while (nrow(trow) > 0) {
       # Fix length if necessary
-      if (!correct.length) {
-        t.key <- t.key %>% mutate(length = length - period_offset)
-      }
+      if (!correct.length)
+        trow <- trow %>% mutate(length = length - period_offset)
       
-      # Query time
-      t.time <- tbl(dbt, sprintf("temp_period_%s", period)) %>%
-        arrange(phase_id, period_id) %>%
-        select(phase_id, period_id, time) %>%
-        collect()
+      # Expand data
+      tdata <- trow %>%
+        mutate(key = as.numeric(key), phase_id = as.numeric(phase_id)) %>%
+        select(key_id = key, phase_id, period_offset, length) %>%
+        expand_tkey
       
-      # Read all the binary data for summary periods
-      tdata <- expand_tkey(t.key)
-      value.data <- readBin(bin.con, double(),
+      # Query data
+      value.data <- readBin(bin.con,
+                            "double",
                             n = nrow(tdata),
-                            size = 8,
+                            size = 8L,
                             endian = "little")
+      num.read <- num.read + length(value.data)
       
-      # Check the size of data (this happens when there is a problem)
+      # Check the size of data (they won't match if there is a problem)
       if (length(value.data) < nrow(tdata)) {
-        stop("Problem reading binary data for ", times[period], " results (reached end of file).\n",
+        rplexos_message("   ", num.read, " values read")
+        stop("Problem reading ", period.name, " binary data (reached end of file).\n",
              "  ", nrow(tdata), " values requested, ", length(value.data), " returned.\n",
              "  This is likely a bug in rplexos. Please report it.", call. = FALSE)
       }
-        
+      
       # Copy data
       tdata$value <- value.data
+      
+      # Join with time
       tdata2 <- tdata %>%
-                inner_join(t.time, by = c("phase_id", "period_id")) %>%
-                select(key, time, value)
+        inner_join(t.time, by = c("phase_id", "period_id"))
       
-      # Execute query in one big binding statement
-      sql <- sprintf("INSERT INTO data_%s VALUES(?, ?, ?)", times[period])
-      if (packageVersion("RSQLite") >= 1) {
-        dbBegin(dbf$con)
+      # Add data to SQLite
+      if (period > 0) {
+        tdata3 <- tdata2 %>% select(key, time, value)
+        
+        dbGetPreparedQuery(dbf$con,
+          sprintf("INSERT INTO data_%s VALUES(?, ?, ?)", times[period]),
+          bind.data = tdata3 %>% as.data.frame)
       } else {
-        dbBeginTransaction(dbf$con)
-      }
-      dbGetPreparedQuery(dbf$con, sql, bind.data = tdata2)
-      dbCommit(dbf$con)
-    } else {
-      # Read time data
-      time0 <- tbl(dbt, "temp_period_0") %>%
-        select(phase_id, period_id, interval_id) %>%
-        collect
-      
-      # Read t_key_index entries for period data
-      sql <- "SELECT nk.key, nk.phase_id, nk.table_name, tki.period_offset, tki.length
-              FROM t_key_index tki
-              JOIN temp_key nk
-              ON tki.key_id = nk.[key]
-              WHERE tki.period_type_id = 0
-              ORDER BY tki.position"
-      tki <- dbSendQuery(dbt$con, sql)
-      
-      # Data insert in one transaction
-      if (packageVersion("RSQLite") >= 1) {
-        dbBegin(dbf$con)
-      } else {
-        dbBeginTransaction(dbf$con)
-      }
-      
-      # Read one row from the query
-      trow <- fetch(tki, 1)
-      
-      while (nrow(trow) > 0) {
-        # Fix length if necessary
-        if (!correct.length)
-          trow$length = trow$length - trow$period_offset
-        
-        # Query data
-        tdata <- data.frame(key = as.integer(trow$key),
-                            phase_id = as.integer(trow$phase_id),
-                            period_id    = 1:trow$length + trow$period_offset)
-        value.data <- readBin(bin.con, double(),
-                              n = nrow(tdata),
-                              size = 8,
-                              endian = "little")
-        
-        # Check the size of data (this happens when there is a problem)
-        if (length(value.data) < nrow(tdata)) {
-          stop("Problem reading binary data for interval results (reached end of file)\n",
-               "  ", nrow(tdata), " values requested, ", length(value.data), " returned.\n",
-               "  This is likely a bug in rplexos. Please report it.", call. = FALSE)
-        }
-        
-        # Copy data
-        tdata$value <- value.data
-        
-        # Eliminate repeats
-        tdata2 <- tdata %>%
-          inner_join(time0, by = c("phase_id", "period_id")) %>%
-          arrange(interval_id)
+        # Eliminate consecutive repeats
         default.interval.to.id <- max(tdata2$interval_id)
         tdata3 <- tdata2 %>%
+          arrange(interval_id) %>%
           filter(value != lag(value, default = Inf)) %>%
           mutate(interval_to_id = lead(interval_id - 1, default = default.interval.to.id)) %>%
           select(key, time_from = interval_id, time_to = interval_to_id, value)
         
-        # Add data to SQLite
         dbGetPreparedQuery(dbf$con,
-                           sprintf("INSERT INTO %s (key, time_from, time_to, value)
-                                    VALUES(?, ?, ?, ?)", trow$table_name),
-                           bind.data = data.frame(tdata3))
-       
-        # Next row in the query
-        trow <- fetch(tki, 1)
+          sprintf("INSERT INTO %s (key, time_from, time_to, value)
+                  VALUES(?, ?, ?, ?)", trow$table_name),
+          bind.data = tdata3 %>% as.data.frame)
       }
-
-      # Finish transaction
-      dbClearResult(tki)
-      dbCommit(dbf$con)
+      
+      # Read next row from the query
+      trow <- dbFetch(tki, num.rows)
     }
+    
+    # Finish transaction
+    rplexos_message("   ", num.read, " values read")
+    dbClearResult(tki)
+    dbCommit(dbf$con)
     
     # Close binary file connection
     close(bin.con)
   }
   
   # Read Log file into memory
-  log.content <- read_file_in_zip(file, log.pos)
-  log.result <- plexos_log_parser(log.content)
-  for(i in names(log.result)) {
-    dbWriteTable(dbf$con, i, log.result[[i]] %>% as.data.frame, row.names = FALSE)
+  rplexos_message("Reading and processing log file")
+  log.content <- NULL
+  try(log.content <- read_file_in_zip(file, log.pos), silent = TRUE)
+  if (is.null(log.content)) {
+    # Error reading log file, throw a warning
+    warning("Could not read Log in solution '", file, "'", call. = FALSE)
+  } else {
+    # Success reading file, try to parse it
+    log.result <- plexos_log_parser(log.content)
+    
+    if (length(log.result) < 2L) {
+      warning("Log in solution '", file, "' did not parse correctly.", call. = FALSE)
+    }
+    
+    for (i in names(log.result)) {
+      dbWriteTable(dbf$con, i, log.result[[i]] %>% as.data.frame, row.names = FALSE)
+    }
   }
   
   # Close database connections
   dbDisconnect(dbt$con)
   dbDisconnect(dbf$con)
+  
+  # Message that file processing is done
+  rplexos_message("Finished processing file ", file, "\n")
   
   # Delete temporary database
   if (!keep.temp) {
@@ -348,8 +363,20 @@ read_file_in_zip <- function(zip.file, position) {
 
 # Populate new database with XML contents
 new_database <- function(db, xml) {
+  rplexos_message("Reading XML file and saving content")
+  
   # Read XML and convert to a list
   xml.list <- process_xml(xml)
+  
+  # Print PLEXOS version when debuging
+  ver.pos <- grep("Version|version", xml.list$t_config[, 1])
+  if (length(ver.pos) == 1L) {
+    rplexos_message("   PLEXOS version:  '", xml.list$t_config[ver.pos, 2], "'")
+    rplexos_message("   rplexos version: '", packageVersion("rplexos"), "'")
+  } else {
+    rplexos_message("   PLEXOS version: N/A")
+    rplexos_message("   rplexos version: '", packageVersion("rplexos"), "'")
+  }
   
   # Turn PRAGMA OFF
   dbGetQuery(db$con, "PRAGMA synchronous = OFF");
@@ -380,6 +407,8 @@ new_database <- function(db, xml) {
 
 # Add a few tables that will be useful later on
 add_extra_tables <- function(db) {
+  rplexos_message("Adding extra tables to the database")
+  
   # View with class and class_group
   sql <- "CREATE VIEW temp_class AS
           SELECT tc.class_id class_id,
@@ -453,15 +482,22 @@ add_extra_tables <- function(db) {
             ON ch.object_id = m.child_object_id"
   dbGetQuery(db$con, sql)
   
-  # View to list zones
-  sql <- "CREATE VIEW temp_zones AS
+  # Views to list zones
+  sql <- "CREATE VIEW temp_zones_id AS
           SELECT child_object_id,
-                 parent_name region,
-                 parent_category zone
+                 min(parent_object_id) parent_object_id
           FROM temp_membership
           WHERE collection = 'Generators' 
-                AND
-                parent_class = 'Region'"
+                AND parent_class = 'Region'
+          GROUP BY child_object_id"
+  dbGetQuery(db$con, sql)
+  sql <- "CREATE VIEW temp_zones AS
+          SELECT a.child_object_id,
+                 b.name region,
+                 b.category zone
+          FROM temp_zones_id a
+          JOIN temp_object b
+          WHERE a.parent_object_id = b.object_id"
   dbGetQuery(db$con, sql)
   
   # Read key data and transform it
@@ -521,6 +557,12 @@ add_extra_tables <- function(db) {
            timeslice, band, sample) %>%
     dbWriteTable(db$con, "temp_key", ., row.names = FALSE)
   
+  # Check that t_key and temp_key have the same number of rows
+  t.key.length <- tbl(db, "t_key") %>% summarize(n = n()) %>% collect
+  temp.key.length <- tbl(db, "temp_key") %>% summarize(n = n()) %>% collect
+  rplexos_message("   t_key has    ", t.key.length$n,    " rows")
+  rplexos_message("   temp_key has ", temp.key.length$n, " rows")
+  
   # Create tables to hold interval, day, week, month, and yearly timestamps
   for (i in 0:4) {
     sql <- sprintf("CREATE TABLE temp_period_%s (phase_id INT, period_id INT, interval_id INT, time real)", i)
@@ -562,18 +604,29 @@ add_extra_tables <- function(db) {
 correct_length <- function(db, p) {
   res <- tbl(db, "t_key_index") %>%
     filter(period_type_id == p) %>%
-    summarize(JustLength           = max(position / 8 + length),
-              SumLength            = sum(length),
-              SumLengthMinusOffset = sum(length - period_offset)) %>%
+    summarize(JustLength            = max(position / 8 + length),
+              JustLengthMinusOffset = max(position / 8 + length - period_offset),
+              SumLength             = sum(length),
+              SumLengthMinusOffset  = sum(length - period_offset)) %>%
     collect
   
+  # Debug output
+  rplexos_message("   Max position:           ", res$JustLength)
+  rplexos_message("   Adjusted max position:  ", res$JustLengthMinusOffset)
+  rplexos_message("   Sum of length:          ", res$SumLength)
+  rplexos_message("   Sum of adjusted length: ", res$SumLengthMinusOffset)
+  
   if (res$JustLength == res$SumLength) {
+    rplexos_message("   ", res$JustLength, " entries expected in t_data_", p, ".BIN")
     return(TRUE)
-  } else if (res$JustLength == res$SumLengthMinusOffset) {
+  } else if (res$JustLengthMinusOffset == res$SumLengthMinusOffset) {
+    rplexos_message("   Length correction is needed")
+    rplexos_message("   ", res$JustLengthMinusOffset, " entries expected in t_data_", p, ".BIN")
     return(FALSE)
   }
   
-  warning("Problem with lenght of 't_key_index' for period ", p, "\n",
+  # This case is 
+  warning("Problem with length of 't_key_index' for period ", p, "\n",
           "in file '", db$path, "'",
           call. = FALSE, immediate. = TRUE)
   

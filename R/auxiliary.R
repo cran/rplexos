@@ -67,6 +67,13 @@ escape.POSIXct <- function(x, parens = NA, collapse = ", ", con = NULL) {
   escape(x, parens = parens, collapse = collapse, con = con)
 }
 
+# Custom function to print debug messages
+rplexos_message <- function(...) {
+  if (getOption("rplexos.debug")) {
+    message("*** rplexos debug: ", ...)
+  }
+}
+
 
 # *** assert_that validation functions ***
 
@@ -114,7 +121,7 @@ on_failure(correct_phase) <- function(call, env) {
 
 # Check that a vector of characters are folder names
 is_folder <- function(x) {
-  if (length(x) == 1) {
+  if (length(x) == 1L) {
     if(x == "*") {
       return(TRUE)
     }
