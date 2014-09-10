@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+<title>query_master. rplexos 0.10</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="author" content="">
+
+<link href="css/bootstrap.css" rel="stylesheet">
+<link href="css/bootstrap-responsive.css" rel="stylesheet">
+<link href="css/highlight.css" rel="stylesheet">
+<link href="css/staticdocs.css" rel="stylesheet">
+
+<!--[if lt IE 9]>
+  <script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script>
+<![endif]-->
+  </head>
+
+  <body>
+    <div class="navbar">
+  <div class="navbar-inner">
+    <div class="container">
+      <a class="brand" href="#">rplexos 0.10</a>
+      <div class="nav">
+        <ul class="nav">
+          <li><a href="index.html"><i class="icon-home icon-white"></i> Index</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+    <div class="container">
+      <header>
+        
+      </header>
+      
+      <h1>Query data and aggregate data</h1>
+
+<div class="row">
+  <div class="span8">
+    <h2>Usage</h2>
+    <pre><div>query_master(db, time, col, prop, columns&nbsp;=&nbsp;"name", time.range&nbsp;=&nbsp;NULL, filter&nbsp;=&nbsp;NULL, phase&nbsp;=&nbsp;4)</div>
+<div>query_interval(db, ...)</div>
+<div>query_day(db, ...)</div>
+<div>query_week(db, ...)</div>
+<div>query_month(db, ...)</div>
+<div>query_year(db, ...)</div>
+<div>sum_master(db, time, col, prop, columns&nbsp;=&nbsp;"name", time.range&nbsp;=&nbsp;NULL, filter&nbsp;=&nbsp;NULL, phase&nbsp;=&nbsp;4)</div>
+<div>sum_interval(db, ...)</div>
+<div>sum_day(db, ...)</div>
+<div>sum_week(db, ...)</div>
+<div>sum_month(db, ...)</div>
+<div>sum_year(db, ...)</div></pre>
+    
+    <h2>Arguments</h2>
+    <dl>
+      <dt>db</dt>
+      <dd>PLEXOS database object</dd>
+      <dt>time</dt>
+      <dd>character. Table to query from (interval, day, week, month, year)</dd>
+      <dt>col</dt>
+      <dd>character. Collection to query</dd>
+      <dt>prop</dt>
+      <dd>character vector. Property or properties to query</dd>
+      <dt>columns</dt>
+      <dd>character. Data columns to query or aggregate by (defaults to <code>name</code>)</dd>
+      <dt>time.range</dt>
+      <dd>character. Range of dates (Give in 'ymdhms' or 'ymd' format)</dd>
+      <dt>filter</dt>
+      <dd>list. Used to filter by data columns (see details)</dd>
+      <dt>phase</dt>
+      <dd>integer. PLEXOS optimization phase (1-LT, 2-PASA, 3-MT, 4-ST)</dd>
+      <dt>...</dt>
+      <dd>parameters passed from shortcut functions to master (all except <code>time</code>)</dd>
+    </dl>
+    
+    <div class="Query data and aggregate data">
+      <h2>Query data and aggregate data</h2>
+      
+    </div>
+
+    <div class="Value">
+      <h2>Value</h2>
+      
+      <p>A data frame that contains data summarized/aggregated by scenario.</p>
+  
+    </div>
+
+    <div class="Description">
+      <h2>Description</h2>
+      
+      <p>This collection of functions retrieves data from the processed PLEXOS solutions and
+returns it in a convenient format.</p>
+  
+    </div>
+
+    <div class="Details">
+      <h2>Details</h2>
+      
+      <p>The family <code>query_*</code> returns the raw data in the databases, while <code>sum_*</code>
+aggregates the data according to <code>columns</code>.</p>
+  
+      <p>The functions <code>*_day</code>, <code>*_week</code>, <code>*_month</code> and <code>*_year</code> are
+shortcuts for the corresponding, <code>*_master</code> function.</p>
+  
+      <p>The following is a list of valid items for <code>columns</code> and filtering. Additionally,
+<code>time</code> can be specified for summary data (interval data always includes <code>time</code>).
+<ul>
+<li><code>category</code>
+  </li>
+<li><code>property</code>
+  </li>
+<li><code>name</code> (default for columns)
+  </li>
+<li><code>parent</code> (automatically selected when <code>name</code> is selected)
+  </li>
+<li><code>category</code>
+  </li>
+<li><code>region</code> (only meaningful for generators)
+  </li>
+<li><code>zone</code> (only meaningful for generators)
+  </li>
+<li><code>period_type</code>
+  </li>
+<li><code>band</code>
+  </li>
+<li><code>sample</code>
+  </li>
+<li><code>timeslice</code>
+</li>
+</ul></p>
+  
+      <p>If defined, the <code>filter</code> parameter must be a <code>list</code>. The elements must be chracter
+vectors and need to have a valid column name (see previous bullet points). For example, one
+could define it as follows:</p>
+  
+      <p><code>filter = list(name = c("Generator1", "Generator2"), region = "Region1")</code></p>
+  
+      <p>To filter by time use the <code>time.range</code> parameter, instead of adding it as an entry in the
+<code>filter</code> parameter.</p>
+  
+      <p>If a scenario has multiple databases, the data will be aggregated automatically. If two or more
+databases within the same scenario have overlapping time periods, the default is to select the
+data from the last database (execute <code>summary(db)</code> so see the order). To change this behavior
+set the global option <code>rplexos.tiebreak</code> to <code>first</code>, <code>last</code>, or <code>all</code> to
+select data from the first database, the last one or keep all of them.</p>
+  
+      <p>Multiple properties can be queried within a collection. If <code>prop</code> equals the widcard
+<code>"*"</code>, all the properties within a collection are returned.</p>
+  
+    </div>
+      </div>
+  <div class="span4">
+    <!-- <ul>
+      <li>query_day</li><li>query_interval</li><li>query_master</li><li>query_month</li><li>query_week</li><li>query_year</li><li>sum_day</li><li>sum_interval</li><li>sum_master</li><li>sum_month</li><li>sum_week</li><li>sum_year</li>
+    </ul>
+    <ul>
+      
+    </ul> -->
+      
+    <h2>See also</h2>
+    
+<code><a href='plexos_open.html'>plexos_open</a></code> to create the PLEXOS database object
+
+        
+  </div>
+</div>
+      
+      <footer>
+      <p class="pull-right"><a href="#">Back to top</a></p>
+<p>Built by <a href="https://github.com/hadley/staticdocs">staticdocs</a>. Styled with <a href="http://twitter.github.com/bootstrap">bootstrap</a>.</p>
+      </footer>
+    </div>
+  </body>
+</html>
