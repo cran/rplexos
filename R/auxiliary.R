@@ -93,5 +93,19 @@ on_failure(correct_date) <- function(call, env) {
 correct_phase <- function(x) x %in% 1:4
 
 on_failure(correct_phase) <- function(call, env) {
-  paste0("Phase must be one of: 1 (LT), 2 (PASA), 3 (MT) or 4 (ST)")
+  paste0("'phase' must be one of: 1 (LT), 2 (PASA), 3 (MT) or 4 (ST)")
+}
+
+# Check that a vector of characters are folder names
+is_folder <- function(x) {
+  if (length(x) == 1) {
+    if(x == "*") {
+      return(TRUE)
+    }
+  }
+  all(file.exists(x)) & all(file.info(x)$isdir, na.rm = FALSE)
+}
+
+on_failure(is_folder) <- function(call, env) {
+  paste0("'folders' must be a vector of existing folders or the wildcard \"*\"")
 }

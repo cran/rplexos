@@ -8,7 +8,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   
   # Check that file exists
   if (!file.exists(file)) {
-    warning(file, " does not exist and was ignored.")
+    warning(file, " does not exist and was ignored.", call. = FALSE)
     return("")
   }
 
@@ -31,7 +31,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   xml.pos <- grep("^Model.*xml$", zip.content$Name)
   bin.pos <- grep("^t_data_[0-4].BIN$", zip.content$Name)
   if ((length(xml.pos) == 0) | (length(bin.pos) == 0)) {
-    warning(file, " is not a PLEXOS solution file and was ignored.")
+    warning(file, " is not a PLEXOS solution file and was ignored.", call. = FALSE)
     return("")
   }
   
@@ -44,7 +44,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   # Check that XML is a valid PLEXOS file
   plexos.check <- grep("SolutionDataset", xml.content)
   if (length(plexos.check) == 0) {
-    warning(file, " is not a PLEXOS database and was ignored.")
+    warning(file, " is not a PLEXOS database and was ignored.", call. = FALSE)
     return("")
   }
   
@@ -68,51 +68,55 @@ process_solution <- function(file, keep.temp = FALSE) {
   
   # Add config table
   dbGetQuery(dbt$con, "CREATE TABLE new.config AS SELECT * FROM t_config")
+  sql <- sprintf("INSERT INTO new.config VALUES (\"rplexos\", \"%s\")", packageVersion("rplexos"))
+  dbGetQuery(dbt$con, sql)
   
   # Add time table
   sql <- "INSERT INTO new.time
-          SELECT phase_id, period_id, nrel_time
-          FROM nrel_period_0"
+          SELECT phase_id, period_id, temp_time
+          FROM temp_period_0"
   dbGetQuery(dbt$con, sql)
   
   # Collate information to key (first period data, then summary data)
   sql <- "INSERT INTO new.key
-          SELECT k.key_id, c.full_name AS collection, p.name AS property, p.unit, m.name,
-                 m.parent_name AS parent, m.category, m.region, m.zone, k.phase_id,
+          SELECT k.key_id, c.full_name AS collection, p.name AS property, p.unit,
+                 m.name, m.parent_name AS parent, m.category, m.region, m.zone,
+                 c.class, c.class_group, k.phase_id,
                  k.period_type_id, k.band_id, k.sample_id, k.timeslice_id
           FROM t_key k
-          INNER JOIN nrel_membership m
+          INNER JOIN temp_membership m
           ON m.membership_id = k.membership_id
-          INNER JOIN nrel_property p
+          INNER JOIN temp_property p
           ON k.property_id = p.property_id
-          INNER JOIN nrel_collection c
+          INNER JOIN temp_collection c
           ON c.collection_id = p.collection_id
           WHERE k.period_type_id = 0"
   dbGetQuery(dbt$con, sql)
   
   sql <- "INSERT INTO new.key
           SELECT k.key_id, c.full_name AS collection, p.summary_name AS property, p.summary_unit AS unit,
-                 m.name, m.parent_name AS parent, m.category, m.region, m.zone, k.phase_id,
+                 m.name, m.parent_name AS parent, m.category, m.region, m.zone,
+                 c.class, c.class_group, k.phase_id,
                  k.period_type_id, k.band_id, k.sample_id, k.timeslice_id
           FROM t_key k
-          INNER JOIN nrel_membership m
+          INNER JOIN temp_membership m
           ON m.membership_id = k.membership_id
-          INNER JOIN nrel_property p
+          INNER JOIN temp_property p
           ON k.property_id = p.property_id
-          INNER JOIN nrel_collection c
+          INNER JOIN temp_collection c
           ON c.collection_id = p.collection_id
           WHERE k.period_type_id = 1"
   dbGetQuery(dbt$con, sql)
   
   # Copy key_interval data
   sql <- "INSERT INTO new.key_interval
-          SELECT DISTINCT NULL, collection, name, parent, category, region, zone, phase_id, period_type_id, band_id, sample_id, timeslice_id
+          SELECT DISTINCT NULL, collection, name, parent, category, region, zone, class, class_group, phase_id, period_type_id, band_id, sample_id, timeslice_id
           FROM new.key
           WHERE period_type_id = 0"
   dbGetQuery(dbt$con, sql)
   
   # In the temporary file relate both keys
-  sql <- "CREATE TABLE nrel_key AS
+  sql <- "CREATE TABLE temp_key AS
           SELECT * FROM key NATURAL LEFT OUTER JOIN key_interval"
   dbGetQuery(dbt$con, sql)
   
@@ -134,7 +138,7 @@ process_solution <- function(file, keep.temp = FALSE) {
     dbGetQuery(dbf$con, sql)
     
     sql <- sprintf("CREATE VIEW '%s' AS
-                    SELECT k.name, k.parent, k.category, k.region, k.zone, datetime(t.time) AS time, d.value
+                    SELECT k.name, k.parent, k.category, k.region, k.zone, k.class, k.class_group, datetime(t.time) AS time, d.value
                     FROM '%s' d, key_interval k, time t
                     WHERE d.key_interval = k.key_interval AND t.phase_id = k.phase_id
                     AND t.period BETWEEN d.time_from AND d.time_to", view.name, table.name)
@@ -156,7 +160,7 @@ process_solution <- function(file, keep.temp = FALSE) {
       # Read t_key_index entries for current period
       sql <- sprintf("SELECT tki.key_id, nk.phase_id, tki.period_offset, tki.length
                       FROM t_key_index tki
-                      JOIN nrel_key nk
+                      JOIN temp_key nk
                       ON tki.key_id = nk.key
                       WHERE tki.period_type_id = %s", period, period)
       t.key <- dbGetQuery(dbt$con, sql)
@@ -166,9 +170,9 @@ process_solution <- function(file, keep.temp = FALSE) {
         t.key$length = t.key$length - t.key$period_offset
       
       # Query time
-      t.time <- tbl(dbt, sprintf("nrel_period_%s", period)) %>%
+      t.time <- tbl(dbt, sprintf("temp_period_%s", period)) %>%
         arrange(phase_id, period_id) %>%
-        select(phase_id, period_id, time = nrel_time) %>%
+        select(phase_id, period_id, time = temp_time) %>%
         collect()
       
       # Read all the binary data for summary periods
@@ -190,7 +194,7 @@ process_solution <- function(file, keep.temp = FALSE) {
       # Read t_key_index entries for period data
       sql <- "SELECT nk.key_interval, nk.collection, nk.property, tki.period_offset, tki.length
               FROM t_key_index tki
-              JOIN nrel_key nk
+              JOIN temp_key nk
               ON tki.key_id = nk.key
               WHERE tki.period_type_id = 0"
       tki <- dbSendQuery(dbt$con, sql)
@@ -217,7 +221,7 @@ process_solution <- function(file, keep.temp = FALSE) {
         # Eliminate repeats
         tdata2 <- tdata %>%
           filter(value != lag(value, default = Inf)) %>%
-          mutate(period_to_id = lead(period_id - 1, default = trow$length))
+          mutate(period_to_id = lead(period_id - 1, default = max(tdata$period_id)))
         
         # Add data to SQLite
         dbGetPreparedQuery(dbf$con,
@@ -259,14 +263,15 @@ start_db <- function(db, times) {
   
   # Store all keys
   sql <- "CREATE TABLE key (key integer PRIMARY KEY, collection string, property string, unit string,
-          name string, parent string, category string, region string, zone string, phase_id integer,
-          period_type_id integer, band_id integer, sample_id integer, timeslice_id integer)"
+          name string, parent string, category string, region string, zone string, class integer,
+          class_group integer, phase_id integer, period_type_id integer, band_id integer, sample_id integer,
+          timeslice_id integer)"
   dbGetQuery(db$con, sql)
   
   # Store key for objects, without properties
   sql <- "CREATE TABLE key_interval (key_interval integer PRIMARY KEY, collection string, name string,
-          parent string, category string, region string, zone string, phase_id integer, period_type_id integer,
-          band_id integer, sample_id integer, timeslice_id integer)"
+          parent string, category string, region string, zone string, class integer, class_group integer,
+          phase_id integer, period_type_id integer, band_id integer, sample_id integer, timeslice_id integer)"
   dbGetQuery(db$con, sql)
   
   # For each summary time, create a table and a view
@@ -283,13 +288,13 @@ start_db <- function(db, times) {
   
   # Create view for list of properties
   sql <- "CREATE VIEW property AS
-          SELECT DISTINCT collection, property, unit, phase_id, period_type_id AS is_summary,
+          SELECT DISTINCT class_group, class, collection, property, unit, phase_id, period_type_id AS is_summary,
                 max(band_id) != min(band_id) AS is_multi_band,
                 max(sample_id) != min(sample_id) AS is_multi_sample,
                 max(timeslice_id) != min(timeslice_id) AS is_multi_timeslice
           FROM key
-          GROUP BY collection, property, unit, phase_id, period_type_id
-          ORDER BY period_type_id, collection, property"
+          GROUP BY class_group, class, collection, property, unit, phase_id, period_type_id
+          ORDER BY phase_id, period_type_id, class_group, class, collection, property"
   dbGetQuery(db$con, sql)
         
   # Turn PRAGMA OFF
@@ -335,10 +340,16 @@ add_extra_tables <- function(db) {
   # Create new table to hold collection names
   #   Special characters are eliminated
   #   full_name includes parent class info or complement name
-  sql <- "SELECT c1.*, c2.name AS parent_class
+  sql <- "SELECT c1.*, c3.name AS class, c4.name AS class_group, c2.name AS parent_class, c5.name AS parent_class_group
           FROM t_collection c1
           INNER JOIN t_class c2
-          ON c2.class_id == c1.parent_class_id"
+          ON c2.class_id == c1.parent_class_id
+          INNER JOIN t_class c3
+          ON c3.class_id == c1.child_class_id
+          INNER JOIN t_class_group c4
+          ON c4.class_group_id == c3.class_group_id
+          INNER JOIN t_class_group c5
+          ON c5.class_group_id == c2.class_group_id"
   col <- dbGetQuery(db$con, sql)
   
   col$name         <- safe_clean_string(col, "name")
@@ -348,10 +359,10 @@ add_extra_tables <- function(db) {
   sel <- col$parent_class != "System"
   col$full_name[sel] <- paste(col$parent_class, col$name, sep = "_")[sel]
 
-  dbWriteTable(db$con, "nrel_collection", col)
+  dbWriteTable(db$con, "temp_collection", col)
   
   # Add category to object
-  sql <- "CREATE TABLE nrel_object AS
+  sql <- "CREATE TABLE temp_object AS
           SELECT o.*, c.name AS category
           FROM t_object o
           INNER JOIN t_category c
@@ -359,25 +370,25 @@ add_extra_tables <- function(db) {
   dbGetQuery(db$con, sql)
   
   # Create table with memberships and parent/object information
-  sql <- "CREATE TABLE nrel_membership0 AS
+  sql <- "CREATE TABLE temp_membership0 AS
           SELECT m.*, co.name, po.name AS parent_name, co.category, po.category AS parent_category
           FROM t_membership m
-          INNER JOIN nrel_object co
+          INNER JOIN temp_object co
           ON co.object_id = m.child_object_id
-          INNER JOIN nrel_object po
+          INNER JOIN temp_object po
           ON po.object_id = m.parent_object_id"
   dbGetQuery(db$con, sql)
   
   # Add region and zone to memberships
-  regs.col <- tbl(db, "nrel_collection") %>%
+  regs.col <- tbl(db, "temp_collection") %>%
               filter(name == "Generators", parent_class == "Region") %>%
               select(collection_id)
   col.id <- collect(regs.col)$collection_id[1]
-  sql <- "CREATE TABLE nrel_membership AS
+  sql <- "CREATE TABLE temp_membership AS
           SELECT m1.*, ifnull(m2.parent_name, '') AS region, ifnull(m2.parent_category, '') AS zone
-          FROM nrel_membership0 m1
+          FROM temp_membership0 m1
           LEFT OUTER JOIN (SELECT child_object_id, parent_name, parent_category
-                           FROM nrel_membership0
+                           FROM temp_membership0
                            WHERE collection_id = %s) m2
           ON m1.child_object_id = m2.child_object_id"
   sql <- sprintf(sql, col.id)
@@ -393,11 +404,11 @@ add_extra_tables <- function(db) {
   prop <- dbGetQuery(db$con, sql)
   prop$name         <- safe_clean_string(prop, "name")
   prop$summary_name <- safe_clean_string(prop, "summary_name")
-  dbWriteTable(db$con, "nrel_property", prop)
+  dbWriteTable(db$con, "temp_property", prop)
   
   # Create tables to hold interval, day, week, month, and yearly timestamps
   for (i in 0:4) {
-    sql <- sprintf("CREATE TABLE nrel_period_%s (phase_id, period_id integer, nrel_time real)", i)
+    sql <- sprintf("CREATE TABLE temp_period_%s (phase_id, period_id integer, temp_time real)", i)
     dbGetQuery(db$con, sql)
   }
   
@@ -405,25 +416,25 @@ add_extra_tables <- function(db) {
   column.times <- c("day_id", "week_id", "month_id", "fiscal_year_id")
   for (phase in 1:4) {
     # Join t_period_0 and t_phase
-    sql <- sprintf("CREATE TABLE nrel_phase_%s AS
+    sql <- sprintf("CREATE TABLE temp_phase_%s AS
                     SELECT p.*, ph.period_id, julianday(p.year || '-' || substr(0 || p.month_of_year, -2)
-                    || '-' || substr(0 || p.day_of_month, -2) || 'T' || substr(p.datetime, -8)) AS nrel_time
+                    || '-' || substr(0 || p.day_of_month, -2) || 'T' || substr(p.datetime, -8)) AS temp_time
                     FROM t_period_0 p
                     INNER JOIN t_phase_%s ph
                     ON p.interval_id = ph.interval_id", phase, phase)
     dbGetQuery(db$con, sql)
     
     # Fix time stamps in t_period_0 (interval)
-    sql <- sprintf("INSERT INTO nrel_period_0
-                    SELECT %s, period_id, nrel_time
-                    FROM nrel_phase_%s", phase, phase)
+    sql <- sprintf("INSERT INTO temp_period_0
+                    SELECT %s, period_id, temp_time
+                    FROM temp_phase_%s", phase, phase)
     dbGetQuery(db$con, sql)
     
     # Fix time stamps in t_period_X (summary data)
     for (i in 1:length(column.times)) {
-      sql <- sprintf("INSERT INTO nrel_period_%s
-                      SELECT %s, %s, min(nrel_time)
-                      FROM nrel_phase_%s
+      sql <- sprintf("INSERT INTO temp_period_%s
+                      SELECT %s, %s, min(temp_time)
+                      FROM temp_phase_%s
                       GROUP BY %s", i, phase, column.times[i], phase, column.times[i])
       dbGetQuery(db$con, sql)
     }

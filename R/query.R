@@ -5,8 +5,20 @@ query_scenario <- function(db, query) {
   assert_that(is.rplexos(db), is.string(query))
   
   db %>%
-    group_by(scenario, position) %>%
-    do(dbGetQuery(.$db[[1]]$con, query))
+    rowwise() %>%
+    do(query_one_row(., query)) %>%
+    ungroup()
+}
+
+# Correctly get query for a row
+query_one_row <- function(db, query) {
+  res <- dbGetQuery(db$db$con, query)
+  if (nrow(res) == 0)
+    return(data.frame())
+  
+  data.frame(scenario = db$scenario[1],
+             position = db$position[1],
+             res)
 }
 
 
@@ -26,9 +38,31 @@ query_property <- function(db) {
   out <- query_scenario(db, "SELECT * from property")
   phases <- c("LT", "PASA", "MT", "ST")
   phases.df <- data.frame(phase_id = 1:4, phase = factor(phases, levels = phases))
-  out2 <- out %>% inner_join(phases.df, by = "phase_id")
-  dcast(out2, phase_id + phase + is_summary + collection + property + unit ~ scenario,
-        length, value.var = "unit")
+  out %>%
+    inner_join(phases.df, by = "phase_id") %>%
+    dcast(phase_id + phase + is_summary + class_group + class + collection + property + unit ~ scenario,
+          length, value.var = "unit")
+}
+
+
+#' Query configuration tables
+#'
+#' Get information from the \code{config} table, which includes: PLEXOS version, solution
+#' date and time, machine and location of PLEXOS input database, model description and user
+#' name. Additionally, it stores the version of rplexos used to process the PLEXOS database.
+#'
+#' @param db PLEXOS database object
+#'
+#' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#'
+#' @export
+#' @importFrom reshape2 dcast
+query_config <- function(db) {
+  data <- query_scenario(db, "SELECT * from config")
+  data2 <- data %>%
+    left_join(db %>% select(scenario, position, filename),
+              by = c("scenario", "position"))
+  dcast(data2, position + scenario + filename ~ element, value.var = "value")
 }
 
 
@@ -123,12 +157,15 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
   # Query data for each property
   out <- db.prop %>%
     rowwise() %>%
-    do(safe_query(., time, .$collection, .$property, new$columns, new$time.range, filter, phase)) %>%
-    solve_ties()
+    do(safe_query(., time, .$collection, .$property, new$columns, new$time.range, filter, phase))
   
   # Return empty dataframe if no results were returned
   if (nrow(out) == 0)
-    return(out)
+    return(data.frame())
+  
+  # Solve ties if they exist
+  out <- out %>%
+    solve_ties()
   
   # Convert columns to factors
   for (i in setdiff(columns, "time"))
@@ -193,6 +230,14 @@ query_year     <- function(db, ...) query_master(db, "year", ...)
 query_master_each <- function(db, time, col, prop, columns, time.range, filter, phase) {
   # Summary data
   if (time != "interval") {
+    # Check that time table has any data
+    count <- dbGetQuery(db$con, sprintf("SELECT COUNT(*) AS rows FROM %s", time))
+    if (count$rows == 0) {
+        warning("Summary table '", time, "' does not exist for database '", db$info$dbname, "'.\n",
+                "    Returning an empty data.frame.", call. = FALSE)
+        return(data.frame())
+    }
+    
     # Always query time column
     columns <- c(setdiff(columns, "time"), "time")
     
@@ -211,7 +256,7 @@ query_master_each <- function(db, time, col, prop, columns, time.range, filter, 
     
     # Query and format
     out <- dbGetQuery(db$con, q)
-    if ("time" %in% names(out))
+    if (("time" %in% names(out)) & (nrow(out) > 0))
       out$time <- ymd_hms(out$time)
     
     return(out)
@@ -277,7 +322,7 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
   
   # If empty query is returned, return empty data.frame
   if(nrow(df) == 0)
-    return(df)
+    return(data.frame())
   
   # Aggregate the data
   out <- df %>% regroup_char(c("scenario", "collection", "property", columns2)) %>%
@@ -318,7 +363,7 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
   
   # Check that collection is valid
   if (nrow(res) == 0) {
-    stop("Collection '", col, "' is not a valid. \n",
+    stop("Collection '", col, "' is not valid. \n",
          "   Use query_property() for list of collections and properties.",
          call. = FALSE)
   }

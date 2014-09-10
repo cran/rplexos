@@ -26,7 +26,7 @@
 #' @export
 process_folder <- function(folders = ".", keep.temp = FALSE) {
   # Check inputs
-  assert_that(is.character(folders), is.flag(keep.temp))
+  assert_that(is.character(folders), is.flag(keep.temp), is_folder(folders))
   
   # Check for wildcard
   if (length(folders) == 1) {

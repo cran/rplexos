@@ -13,7 +13,7 @@
 #' @export
 plexos_open <- function(folders = ".", names = folders) {
   # Check inputs
-  assert_that(is.character(folders), is.character(folders))
+  assert_that(is.character(folders), is.character(names), is_folder(folders))
   
   # Check for wildcard
   if (length(folders) == 1) {
@@ -33,25 +33,26 @@ plexos_open <- function(folders = ".", names = folders) {
     }
   }
   
+  # Function to list PLEXOS files in each folder
   plexos_list_files <- function(df) {
-  filename <- list.files(df$folder %>% as.character,
-                         pattern = ".db$", full.names = TRUE)
-  if (length(filename) == 0)
-    return(data.frame())
+    filename <- list.files(df$folder %>% as.character,
+                           pattern = ".db$", full.names = TRUE)
+    filename <- filename[!grepl("temp.db$", filename)]
+    
+    if (length(filename) == 0L)
+      return(data.frame())
 
-  data.frame(folder = df$folder,
-             scenario = df$scenario,
-             filename)
-}
+    data.frame(folder = df$folder,
+               scenario = df$scenario,
+               filename,
+               stringsAsFactors = FALSE)
+  }
   
   # Get database file names
   df <- data.frame(folder = folders,
                    scenario = factor(names, levels = names)) %>%
-        group_by(folder, scenario) %>%
-        do(data.frame(filename = list.files(.$folder %>% as.character,
-                                            pattern = ".db$", full.names = TRUE))) %>%
-        ungroup() %>%
-        mutate(position = 1:n())
+        rowwise() %>%
+        do(plexos_list_files(.))
   
   # Error if all folders were empty
   if (nrow(df) == 0L)
@@ -70,6 +71,8 @@ plexos_open <- function(folders = ".", names = folders) {
   
   # Open databases
   out <- df %>%
+    ungroup() %>%
+    mutate(position = 1:n()) %>%
     group_by(scenario, position, filename) %>%
     do(db = src_sqlite(as.character(.$filename)))
   
@@ -78,19 +81,6 @@ plexos_open <- function(folders = ".", names = folders) {
   
   out
 }
-
-# List all PLEXOS database files in a folder
-plexos_list_files <- function(df) {
-  filename <- list.files(df$folder %>% as.character,
-                         pattern = ".db$", full.names = TRUE)
-  if (length(filename) == 0)
-    return(data.frame())
-
-  data.frame(folder = df$folder,
-             scenario = df$scenario,
-             filename)
-}
-
 
 #' Close all PLEXOS databases
 #'
