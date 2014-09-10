@@ -5,22 +5,6 @@
 
 using namespace Rcpp;
 
-// expand_interval_data
-Rcpp::List expand_interval_data(Rcpp::DataFrame key, Rcpp::DataFrame interval);
-RcppExport SEXP rplexos_expand_interval_data(SEXP keySEXP, SEXP intervalSEXP) {
-BEGIN_RCPP
-    SEXP __sexp_result;
-    {
-        Rcpp::RNGScope __rngScope;
-        Rcpp::traits::input_parameter< Rcpp::DataFrame >::type key(keySEXP );
-        Rcpp::traits::input_parameter< Rcpp::DataFrame >::type interval(intervalSEXP );
-        Rcpp::List __result = expand_interval_data(key, interval);
-        PROTECT(__sexp_result = Rcpp::wrap(__result));
-    }
-    UNPROTECT(1);
-    return __sexp_result;
-END_RCPP
-}
 // expand_tkey
 Rcpp::DataFrame expand_tkey(Rcpp::DataFrame tkey);
 RcppExport SEXP rplexos_expand_tkey(SEXP tkeySEXP) {

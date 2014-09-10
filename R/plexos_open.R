@@ -77,7 +77,32 @@ plexos_open <- function(folders = ".", names = folders) {
     do(db = src_sqlite(as.character(.$filename)))
   
   # Add rplexos class to object
-  class(out) <- c("rplexos", setdiff(class(out), "rowwise_df"))
+  class(out) <- c("rplexos", class(out))
+  
+  # Check the version of rplexos
+  conf <- query_config(out)
+  this.vers <- packageVersion("rplexos") %>% as.character
+  if (!"rplexos" %in% names(conf)) {
+    # rplexos is not even an entry in the config table
+    warning("File(s) processed with an old version of rplexos. ",
+            "Rerun process_folder() to avoid problems.",
+            call. = FALSE)
+  } else {
+    # Compare
+    comp <- integer(length(conf$rplexos))
+    for (i in 1:length(conf$rplexos))
+      comp[i] <- compareVersion(this.vers, conf$rplexos[i])
+    
+    if (any(comp == -1)) {
+      warning("File(s) processed with a newer version of rplexos. ",
+              "Update rplexos or rerun process_folder() to avoid problems.",
+              call. = FALSE)
+    } else if (any(comp == 1)) {
+      warning("File(s) processed with an old version of rplexos. ",
+              "Rerun process_folder() to avoid problems.",
+              call. = FALSE)
+    }
+  }
   
   out
 }
@@ -97,7 +122,6 @@ plexos_close <- function(db) {
 
   # For each database, close the connection
   db %>%
-    rowwise() %>%
     do(result = dbDisconnect(.$db$con))
   
   # Remove object from memory
@@ -132,4 +156,16 @@ print.rplexos <- function(x, ...) {
   
   print(dcast(info, table ~ position, fun.aggregate = length, value.var = "table"),
         row.names = FALSE)
+}
+
+# Custom ungroup method, to preserve 'rplexos' class
+ungroup.rplexos <- function(x) {
+  class(x) <- setdiff(class(x), c("grouped_df", "rowwise_df"))
+  x
+}
+
+# Avoid group_by_.rowwise_df warning
+group_by_.rplexos <- function(.data, ...) {
+  class(.data) <- setdiff(class(.data), c("rplexos", "rowwise_df"))
+  group_by_(.data, ...)
 }

@@ -5,12 +5,11 @@ query_scenario <- function(db, query) {
   assert_that(is.rplexos(db), is.string(query))
   
   db %>%
-    rowwise() %>%
     do(query_one_row(., query)) %>%
-    ungroup()
+    ungroup
 }
 
-# Correctly get query for a row
+# Correctly get query for a row (won't be necessary with future version of dplyr)
 query_one_row <- function(db, query) {
   res <- dbGetQuery(db$db$con, query)
   if (nrow(res) == 0)
@@ -21,6 +20,24 @@ query_one_row <- function(db, query) {
              res)
 }
 
+# Get a table for all scenarios
+get_table_scenario <- function(db, from, columns = c("scenario", "position")) {
+  # Check inputs
+  assert_that(is.rplexos(db), is.string(from))
+  
+  db %>%
+    do(get_table_one_scenario(., from, columns)) %>%
+    ungroup
+}
+
+# Correctly get query for a row (won't be necessary with future version of dplyr)
+get_table_one_scenario <- function(db, from, columns) {
+  res <- tbl(db$db, from) %>% collect
+  if (nrow(res) == 0)
+    return(data.frame())
+  
+  cbind(db[columns] %>% as.data.frame, res)
+}
 
 #' Get list of available properties
 #'
@@ -35,7 +52,7 @@ query_one_row <- function(db, query) {
 #' @export
 #' @importFrom reshape2 dcast
 query_property <- function(db) {
-  out <- query_scenario(db, "SELECT * from property")
+  out <- get_table_scenario(db, "property")
   phases <- c("LT", "PASA", "MT", "ST")
   phases.df <- data.frame(phase_id = 1:4, phase = factor(phases, levels = phases))
   out %>%
@@ -58,13 +75,29 @@ query_property <- function(db) {
 #' @export
 #' @importFrom reshape2 dcast
 query_config <- function(db) {
-  data <- query_scenario(db, "SELECT * from config")
-  data2 <- data %>%
-    left_join(db %>% select(scenario, position, filename),
-              by = c("scenario", "position"))
-  dcast(data2, position + scenario + filename ~ element, value.var = "value")
+  data <- get_table_scenario(db, "config", columns = c("scenario", "position", "filename"))
+  dcast(data, position + scenario + filename ~ element, value.var = "value")
 }
 
+#' Query log file information
+#'
+#' During the processing of the PLEXOS databases, information from the log file is saved
+#' into the database. This includes solution times and infeasibilities for the different phases.
+#'
+#' @param db PLEXOS database object
+#'
+#' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#'
+#' @export
+query_log <- function(db) {
+  get_table_scenario(db, "log_info", c("scenario", "filename"))
+}
+
+#' @rdname query_log
+#' @export
+query_log_steps <- function(db) {
+  get_table_scenario(db, "log_steps", c("scenario", "filename"))
+}
 
 # Query databases ***********************************************************************
 
@@ -85,14 +118,14 @@ query_config <- function(db) {
 #'   \item{\code{category}}
 #'   \item{\code{property}}
 #'   \item{\code{name} (default for columns)}
-#'   \item{\code{parent}}
+#'   \item{\code{parent} (automatically selected when \code{name} is selected)}
 #'   \item{\code{category}}
 #'   \item{\code{region} (only meaningful for generators)}
 #'   \item{\code{zone} (only meaningful for generators)}
-#'   \item{\code{period_type_id}}
-#'   \item{\code{band_id}}
-#'   \item{\code{sample_id}}
-#'   \item{\code{timeslice_id}}
+#'   \item{\code{period_type}}
+#'   \item{\code{band}}
+#'   \item{\code{sample}}
+#'   \item{\code{timeslice}}
 #' }
 #' 
 #' If defined, the \code{filter} parameter must be a \code{list}. The elements must be chracter
@@ -139,9 +172,12 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
   # Expand db to include multiple properties (if necessary)
   db.temp <- expand.grid(position = db$position, property = new$prop) %>%
     mutate(collection = col)
-  db.prop <- db.temp %>% left_join(db, by = "position")
+  db.prop <- db.temp %>%
+    left_join(db, by = "position")
   
   # This function does the queries and attaches columns to the result
+  # until https://github.com/hadley/dplyr/issues/448 is solved
+  # TODO: remove after dplyr 0.3.1 (here and possibly other places)
   safe_query <- function(x, ...) {
     out <- query_master_each(x$db, ...)
     if (nrow(out) == 0)
@@ -160,8 +196,18 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
     do(safe_query(., time, .$collection, .$property, new$columns, new$time.range, filter, phase))
   
   # Return empty dataframe if no results were returned
-  if (nrow(out) == 0)
+  if (nrow(out) == 0) {
+    warning("Query returned no results", call. = FALSE)
     return(data.frame())
+  }
+  
+  # Check if any scenario is missing from the results
+  missing.scenario <- setdiff(unique(db$scenario), unique(out$scenario))
+  if (length(missing.scenario) > 0) {
+    warning("Query returned no results for scenarios: ",
+            paste(missing.scenario, collapse = ", "),
+            call. = FALSE)
+  }
   
   # Solve ties if they exist
   out <- out %>%
@@ -227,85 +273,111 @@ query_year     <- function(db, ...) query_master(db, "year", ...)
 
 # Query interval for each database
 #' @importFrom lubridate ymd_hms
-query_master_each <- function(db, time, col, prop, columns, time.range, filter, phase) {
+#' @importFrom data.table data.table CJ
+query_master_each <- function(db, time, col, prop, columns, time.range, filter, phase, table.name) {
+  # Divide time.range vector
+  if (!is.null(time.range)) {
+    time.r.min <- time.range[1]
+    time.r.max <- time.range[2]
+  }
+  
   # Summary data
   if (time != "interval") {
     # Check that time table has any data
-    count <- dbGetQuery(db$con, sprintf("SELECT COUNT(*) AS rows FROM %s", time))
+    count <- tbl(db, time) %>%
+      summarize(rows = n()) %>%
+      collect
     if (count$rows == 0) {
-        warning("Summary table '", time, "' does not exist for database '", db$info$dbname, "'.\n",
-                "    Returning an empty data.frame.", call. = FALSE)
+        warning("Summary table '", time, "' is empty for database '", db$info$dbname, "'.\n",
+                "    Returning an empty result.", call. = FALSE)
         return(data.frame())
     }
     
-    # Always query time column
-    columns <- c(setdiff(columns, "time"), "time")
-    
-    col.codes <- paste(columns, collapse = ", ")
-    q <- sprintf("SELECT %s, value from %s
-                  WHERE collection = '%s' AND property = '%s' AND phase_id = %s",
-                  col.codes, time, col, prop, phase)
+    # Get data
+    out <- tbl(db, time) %>%
+      filter(collection == col, property == prop, phase_id == phase) %>%
+      filter_rplexos(filter)
     
     # Add time filter condition
-    if (!is.null(time.range))
-      q <- paste0(q, filter_time_query(time, time.range))
+    if (!is.null(time.range)) {
+      out <- out %>% filter(between(time, time.r.min, time.r.max))
+    }
     
-    # Add key filter condition
-    if (!is.null(filter))
-      q <- paste0(q, filter_key_query(time, filter))
+    # Add time and value columns
+    columns.dots <- c("unit", setdiff(columns, "time"), "time", "value") %>%
+      as.list %>%
+      lapply(as.symbol)
     
     # Query and format
-    out <- dbGetQuery(db$con, q)
-    if (("time" %in% names(out)) & (nrow(out) > 0))
-      out$time <- ymd_hms(out$time)
+    out <- out %>%
+      select_(.dots = columns.dots) %>%
+      collect %>%
+      mutate(time = ymd_hms(time, quiet = TRUE))
     
     return(out)
   }
   
+  # Get the table name that stores the data
+  t.name <- tbl(db, "property") %>%
+    filter(collection == col, property == prop, phase_id == phase, is_summary == 0) %>%
+    collect
+  the.table.name <- gsub("data_interval_", "", t.name$table_name)
+  
   # Interval data, Get time data
-  q <- sprintf("SELECT period, datetime(time) AS time FROM time
-                WHERE phase_id = %s", phase)
+  time.data <- tbl(db, "time")
   
-  # Add time filter condition
-  if (!is.null(time.range))
-      q <- paste0(q, filter_time_query(time, time.range))
+  # Get interval data
+  out <- tbl(db, the.table.name) %>%
+      filter(phase_id == phase) %>%
+      select(-time_to) %>%
+      rename(time = time_from)
   
-  q <- paste0(q, " ORDER BY period")
-  time.data <- dbGetQuery(db$con, q)
+  # Add time filter conditions
+  if (!is.null(time.range)) {
+    time.data <- time.data %>%
+      filter(between(time, time.r.min, time.r.max))
+    out <- out %>%
+      filter(time_from <= time.r.max, time_to >= time.r.min) %>%
+      filter_rplexos(filter)
+  }
+  
+  # Collect time data
+  time.data <- time.data %>%
+    select(time) %>%
+    collect
   
   # If time data is empty, return an empty data frame
   if (nrow(time.data) == 0)
     return(data.frame())
   
-  # Convert into R's time data format
+  # Convert into R time-data format
   time.data$time <- ymd_hms(time.data$time)
+    
+  # Add key, time and value columns
+  columns.dots <- c("key", "unit", setdiff(columns, "time"), "time", "value") %>%
+    as.list %>%
+    lapply(as.symbol)
   
-  # Get interval data
-  table <- paste("data", "interval", col, prop, sep = "_")
-  columns2 <- setdiff(columns, "time")
-  columns2 <- paste0(", k.", columns2, collapse = "")
+  # Query and format
+  out <- out %>%
+    select_(.dots = columns.dots) %>%
+    collect %>%
+      mutate(time = ymd_hms(time, quiet = TRUE))
   
-  q <- sprintf("SELECT d.key_interval, d.time_from, d.time_to %s, d.value
-                FROM %s d NATURAL JOIN key_interval k
-                WHERE d.time_from <= %s AND d.time_to >= %s AND phase_id = %s",
-                columns2, table, max(time.data$period), min(time.data$period), phase)
+  # Expand data
+  #   This will be easier when dplyr supports rolling joins
+  out2 <- data.table(out, key = "key,time")
+  cj2 <- CJ(key = unique(out$key), time = time.data$time)
   
-  # Add key filter condition
-  if (!is.null(filter))
-    q <- paste0(q, filter_key_query(time, filter))
+  out3 <- out2[cj2, roll = TRUE]
+  out3 <- out3 %>%
+    as.data.frame %>%
+    select(-key)
   
-  # Get data
-  int.data <- dbGetQuery(db$con, q)
+  # Restore time zone
+  attributes(out3$time) <- attributes(time.data$time)
   
-  # If interval data is empty, return an empty data frame
-  if (nrow(int.data) == 0)
-    return(data.frame())
-  
-  # Expand time series (in C++) and restore timezone
-  out <- expand_interval_data(int.data, time.data)
-  attributes(out$time) <- attributes(time.data$time)
-  
-  out
+  out3
 }
 
 
@@ -325,7 +397,7 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
     return(data.frame())
   
   # Aggregate the data
-  out <- df %>% regroup_char(c("scenario", "collection", "property", columns2)) %>%
+  out <- df %>% group_by_char(c("scenario", "collection", "property", columns2)) %>%
     summarise(value = sum(value))
   
   # Convert columns to factors
@@ -356,14 +428,14 @@ sum_year     <- function(db, ...) sum_master(db, "year", ...)
 master_checks <- function(db, time, col, prop, columns, time.range, filter, phase) {
   # Get list of properties for the collection
   is.summ <- ifelse(time == "interval", 0, 1)
-  q <- sprintf("SELECT * from property
-                WHERE collection = '%s' AND is_summary = %s",
-                col, is.summ)
-  res <- query_scenario(db, q)
+  is.summ.txt <- ifelse(time == "interval", "interval", "summary")
+  res <- get_table_scenario(db, "property") %>%
+    filter(collection == col, is_summary == is.summ, phase_id == phase) %>%
+    collect
   
   # Check that collection is valid
   if (nrow(res) == 0) {
-    stop("Collection '", col, "' is not valid. \n",
+    stop("Collection '", col, "' is not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
          "   Use query_property() for list of collections and properties.",
          call. = FALSE)
   }
@@ -377,12 +449,13 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
   # Check that all properties are valid
   invalid.prop <- setdiff(prop, res$property)
   if (length(invalid.prop) == 1) {
-    stop("Property '", invalid.prop, "' in collection '", col, "' is not valid.\n",
-         "   Use query_property() for list of collections and properties.",
+    stop("Property '", invalid.prop, "' in collection '", col, "' is not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
+         "   Use query_property() for list of available collections and properties.",
          call. = FALSE)
   } else if (length(invalid.prop) > 1) {
     stop("Properties ", paste0("'", invalid.prop, "'", collapse = ", "), " in collection '", col,
-         "' are not a valid. \n   Use query_property() for list of collections and properties.",
+         "' are not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
+         "   Use query_property() for list of available collections and properties.",
          call. = FALSE)
   }
   
@@ -390,15 +463,15 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
   res2 <- res %>%
     ungroup() %>%
     filter(property %in% prop) %>%
-    summarize(is_multi_band      = max(is_multi_band),
-              is_multi_sample    = max(is_multi_sample),
-              is_multi_timeslice = max(is_multi_timeslice))
-  if (res2$is_multi_band > 0)
-    columns <- c(setdiff(columns, "band_id"), "band_id")
-  if (res2$is_multi_sample > 0)
-    columns <- c(setdiff(columns, "sample_id"), "sample_id")
-  if (res2$is_multi_timeslice > 0)
-    columns <- c(setdiff(columns, "timeslice_id"), "timeslice_id")
+    summarize(is_multi_band      = max(count_band) > 1,
+              is_multi_sample    = max(count_sample) > 1,
+              is_multi_timeslice = max(count_timeslice) > 1)
+  if (res2$is_multi_timeslice)
+    columns <- c(setdiff(columns, "timeslice"), "timeslice")
+  if (res2$is_multi_band)
+    columns <- c(setdiff(columns, "band"), "band")
+  if (res2$is_multi_sample)
+    columns <- c(setdiff(columns, "sample"), "sample")
   
   # Key filter checks
   if (!is.null(filter)) {
@@ -409,6 +482,10 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
   
   # Columns should not include collection and property; they are always reported
   columns <- setdiff(columns, c("collection", "property"))
+  
+  # If columns include name, add parent automatically
+  if ("name" %in% columns)
+    columns <- c("name", "parent", setdiff(columns, c("name", "parent")))
   
   # Time range checks and convert to POSIXct
   if (!is.null(time.range)) {
@@ -423,29 +500,21 @@ master_checks <- function(db, time, col, prop, columns, time.range, filter, phas
 
 # Filtering *****************************************************************************
 
-# Filter by date
-filter_time_query <- function(table, r) {
-  var <- ifelse(table == "interval", "datetime(time)", "time")
-  sprintf(" AND %s BETWEEN '%s' AND '%s'", var, r[1], r[2])
-}
-
 # Other filters
-filter_key_query <- function(table, x) {
-  if (table == "interval")
-    names(x) <- paste0("k.", names(x))
+filter_rplexos <- function(out, filt) {
+  # Do nothing if filter is empty
+  if (is.null(filt))
+    return(out)
+  if (length(filt) == 0)
+    return(out)
   
-  out <- character(0)
+  # Write the condition as text
+  vals <- lapply(filt, function(x)
+    paste0("\"", x, "\"", collapse = ", ")) %>%
+    paste0("c(", ., ")")
+  cons <- ifelse(lapply(filt, length) == 1, "==", "%in%")
+  cond <- paste(names(filt), cons, vals)
   
-  for (i in 1:length(x)) {
-    if (length(x[[i]]) == 1) {
-      q <- sprintf("AND %s = '%s'", names(x)[i], x[[i]])
-      out <- paste(out, q)
-    } else if (length(x[[i]]) > 1) {
-      q1 <- paste("'", x[[i]], "'", sep = "", collapse = ", ")
-      q <- sprintf("AND %s IN (%s)", names(x)[i], q1)
-      out <- paste(out, q)
-    }
-  }
-  
-  out
+  # Apply condition
+  out %>% filter_(.dots = cond)
 }

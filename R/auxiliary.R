@@ -1,30 +1,22 @@
 # Clean spaces and special characters from strings
 clean_string <- function(x) {
-  gsub(" |&|'|-", "", x)
-}
-
-# Same as clean_string, but makes sure that column exists
-safe_clean_string <- function(x, column) {
-  if (column %in% names(x)) {
-    out <- clean_string(x[, column])
-  } else {
-    out <- rep("", nrow(x))
-  }
-  
-  out
+  gsub(" |&|'|-|\\.", "", x)
 }
 
 # Delete file and give error if unsuccesfull
 stop_ifnot_delete <- function(x) {
   # Error if file cannot be removed
-  if (!file.remove(x))
+  suppressWarnings(did.remove <- file.remove(x))
+  if (!did.remove)
     stop("Unable to delete file: ", x, call. = FALSE)
 }
 
 # Regroup with characters
-regroup_char <- function(x, vars, ...) {
-  vars2 <- lapply(vars, as.symbol)
-  regroup(x, vars2, ...)
+group_by_char <- function(x, vars) {
+  dots <- vars %>%
+    as.list %>%
+    lapply(as.symbol)
+  group_by_(x, .dots = dots)
 }
 
 
@@ -36,7 +28,25 @@ regroup_char <- function(x, vars, ...) {
 #'
 #' @export
 valid_columns <- function() c("collection", "property", "name", "parent", "category", "region", "zone",
-                              "period_type_id", "band_id", "sample_id", "timeslice_id", "time")
+                              "period_type_id", "band", "sample", "timeslice", "time")
+
+
+#' Test if elements in sample column are statistics
+#'
+#' In stochastic simulations, PLEXOS will return sample results and their statistics together. This function
+#' makes it easy to separate them with a filter.
+#'
+#' @param x Vector of sample values from an rplexos query
+#'
+#' @examples
+#' \dontrun{db <- plexos_open()}
+#' \dontrun{res <- query_month(db, "Generator", "Generation")}
+#' \dontrun{res %>% filter(sample_stats(sample))    # To obtain statistics}
+#' \dontrun{res %>% filter(!sample_stats(sample))   # To obtain sample results}
+#'
+#' @export
+is_sample_stats <- function(x)
+  x %in% c("Max", "Min", "Mean", "StDev")
 
 #' Get list of folders in the working directory
 #'
@@ -49,6 +59,12 @@ valid_columns <- function() c("collection", "property", "name", "parent", "categ
 list_folders <- function() {
   f <- dir()
   f[file.info(f)$isdir]
+}
+
+# dplyr escape function for time-data objects
+escape.POSIXct <- function(x, parens = NA, collapse = ", ", con = NULL) {
+  x <- as.character(x)
+  escape(x, parens = parens, collapse = collapse, con = con)
 }
 
 

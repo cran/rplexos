@@ -79,14 +79,14 @@ The following is a list of valid items for \code{columns} and filtering. Additio
   \item{\code{category}}
   \item{\code{property}}
   \item{\code{name} (default for columns)}
-  \item{\code{parent}}
+  \item{\code{parent} (automatically selected when \code{name} is selected)}
   \item{\code{category}}
   \item{\code{region} (only meaningful for generators)}
   \item{\code{zone} (only meaningful for generators)}
-  \item{\code{period_type_id}}
-  \item{\code{band_id}}
-  \item{\code{sample_id}}
-  \item{\code{timeslice_id}}
+  \item{\code{period_type}}
+  \item{\code{band}}
+  \item{\code{sample}}
+  \item{\code{timeslice}}
 }
 
 If defined, the \code{filter} parameter must be a \code{list}. The elements must be chracter

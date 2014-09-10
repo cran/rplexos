@@ -62,5 +62,5 @@ process_folder <- function(folders = ".", keep.temp = FALSE) {
     message("  - Finished folder!")
   }
   
-  TRUE
+  invisible(TRUE)
 }
