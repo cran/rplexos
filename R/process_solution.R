@@ -16,7 +16,7 @@ process_solution <- function(file, keep.temp = FALSE) {
   db.temp <- gsub(".zip", "-temp.db", file)
   db.name <- gsub(".zip", ".db", file)
   
-  # Does the file need to be reprocessed? Does it already exist?
+  # Delete old files, if possible
   if (file.exists(db.temp)) {
     stop_ifnot_delete(db.temp)
   }
@@ -253,7 +253,6 @@ process_solution <- function(file, keep.temp = FALSE) {
       
       # Expand data
       tdata <- trow %>%
-        mutate(key = as.numeric(key), phase_id = as.numeric(phase_id)) %>%
         select(key_id = key, phase_id, period_offset, length) %>%
         expand_tkey
       
@@ -362,7 +361,7 @@ read_file_in_zip <- function(zip.file, position) {
 }
 
 # Populate new database with XML contents
-new_database <- function(db, xml) {
+new_database <- function(db, xml, is.solution = TRUE) {
   rplexos_message("Reading XML file and saving content")
   
   # Read XML and convert to a list
@@ -383,21 +382,24 @@ new_database <- function(db, xml) {
   dbGetQuery(db$con, "PRAGMA journal_mode = MEMORY");
   dbGetQuery(db$con, "PRAGMA temp_store = MEMORY");
   
-  # Create data tables
-  for (i in 0:4) {
-    sql <- sprintf("CREATE TABLE t_data_%s (key_id integer, period_id integer, value double)", i)
-    dbGetQuery(db$con, sql)
+  # Do the following for solution files
+  if (is.solution) {
+    # Create data tables
+    for (i in 0:4) {
+      sql <- sprintf("CREATE TABLE t_data_%s (key_id integer, period_id integer, value double)", i)
+      dbGetQuery(db$con, sql)
+    }
+    
+    # Create phase tables
+    for (i in 0:4) {
+      sql <- sprintf("CREATE TABLE t_phase_%s (interval_id integer, period_id integer)", i)
+      dbGetQuery(db$con, sql)
+    }
+    
+    # Create t_key_index table
+    dbGetQuery(db$con, "CREATE TABLE t_key_index (key_id integer, period_type_id integer, position long, length integer, period_offset integer)");
   }
-  
-  # Create phase tables
-  for (i in 0:4) {
-    sql <- sprintf("CREATE TABLE t_phase_%s (interval_id integer, period_id integer)", i)
-    dbGetQuery(db$con, sql)
-  }
-  
-  # Create t_key_index table
-  dbGetQuery(db$con, "CREATE TABLE t_key_index (key_id integer, period_type_id integer, position long, length integer, period_offset integer)");
-  
+    
   # Write tables from XML file
   for (t in names(xml.list))
     dbWriteTable(db$con, t, xml.list[[t]], append = TRUE, row.names = FALSE)
