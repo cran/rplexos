@@ -4,6 +4,9 @@
 #' the folders in the working directory will be processed (the list of folders if provided by
 #' the \code{\link{list_folders}} function).
 #' 
+#' Do not rename the SQLite databases created with the \code{\link{process_folder}} family of functions.
+#' The code expects those filenames to remain unchanged.
+#' 
 #' @param folders character. Folder(s) where the data is located (each folder represents a scenario)
 #' @param names character. Scenario names
 #'
@@ -36,8 +39,7 @@ plexos_open <- function(folders = ".", names = folders) {
   # Function to list PLEXOS files in each folder
   plexos_list_files <- function(df) {
     filename <- list.files(df$folder %>% as.character,
-                           pattern = ".db$", full.names = TRUE)
-    filename <- filename[!grepl("temp.db$", filename)]
+                           pattern = "rplexos.db$", full.names = TRUE)
     
     if (length(filename) == 0L)
       return(data.frame())
@@ -88,17 +90,15 @@ plexos_open <- function(folders = ".", names = folders) {
             "Rerun process_folder() to avoid problems.",
             call. = FALSE)
   } else {
-    # Compare
-    comp <- integer(length(conf$rplexos))
-    for (i in 1:length(conf$rplexos))
-      comp[i] <- compareVersion(this.vers, conf$rplexos[i])
+    # Compare to installed version
+    comp <- sapply(conf$rplexos, compareVersion, this.vers)
     
-    if (any(comp == -1)) {
+    if (any(comp > 0)) {
       warning("File(s) processed with a newer version of rplexos. ",
               "Update rplexos or rerun process_folder() to avoid problems.",
               call. = FALSE)
-    } else if (any(comp == 1)) {
-      warning("File(s) processed with an old version of rplexos. ",
+    } else if (any(comp < 0)) {
+      warning("File(s) processed with an older version of rplexos. ",
               "Rerun process_folder() to avoid problems.",
               call. = FALSE)
     }

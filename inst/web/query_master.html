@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-<title>query_master. rplexos 0.10</title>
+<title>query_master. rplexos 0.12.1</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="author" content="">
 
@@ -20,7 +20,7 @@
     <div class="navbar">
   <div class="navbar-inner">
     <div class="container">
-      <a class="brand" href="#">rplexos 0.10</a>
+      <a class="brand" href="#">rplexos 0.12.1</a>
       <div class="nav">
         <ul class="nav">
           <li><a href="index.html"><i class="icon-home icon-white"></i> Index</a></li>
@@ -46,7 +46,7 @@
 <div>query_week(db, ...)</div>
 <div>query_month(db, ...)</div>
 <div>query_year(db, ...)</div>
-<div>sum_master(db, time, col, prop, columns&nbsp;=&nbsp;"name", time.range&nbsp;=&nbsp;NULL, filter&nbsp;=&nbsp;NULL, phase&nbsp;=&nbsp;4)</div>
+<div>sum_master(db, time, col, prop, columns&nbsp;=&nbsp;"name", time.range&nbsp;=&nbsp;NULL, filter&nbsp;=&nbsp;NULL, phase&nbsp;=&nbsp;4, multiply.time&nbsp;=&nbsp;FALSE)</div>
 <div>sum_interval(db, ...)</div>
 <div>sum_day(db, ...)</div>
 <div>sum_week(db, ...)</div>
@@ -73,23 +73,22 @@
       <dd>integer. PLEXOS optimization phase (1-LT, 2-PASA, 3-MT, 4-ST)</dd>
       <dt>...</dt>
       <dd>parameters passed from shortcut functions to master (all except <code>time</code>)</dd>
+      <dt>multiply.time</dt>
+      <dd>boolean. When summing interval data, provide the value multiplied by interval duration (See details).</dd>
     </dl>
     
-    <div class="Query data and aggregate data">
-      <h2>Query data and aggregate data</h2>
-      
-    </div>
-
     <div class="Value">
       <h2>Value</h2>
-      
-      <p>A data frame that contains data summarized/aggregated by scenario.</p>
+
+      <p><dl>
+A data frame that contains data summarized/aggregated by scenario.
+</dl></p>
   
     </div>
 
     <div class="Description">
       <h2>Description</h2>
-      
+
       <p>This collection of functions retrieves data from the processed PLEXOS solutions and
 returns it in a convenient format.</p>
   
@@ -97,7 +96,7 @@ returns it in a convenient format.</p>
 
     <div class="Details">
       <h2>Details</h2>
-      
+
       <p>The family <code>query_*</code> returns the raw data in the databases, while <code>sum_*</code>
 aggregates the data according to <code>columns</code>.</p>
   
@@ -148,6 +147,10 @@ select data from the first database, the last one or keep all of them.</p>
   
       <p>Multiple properties can be queried within a collection. If <code>prop</code> equals the widcard
 <code>"*"</code>, all the properties within a collection are returned.</p>
+  
+      <p>The parameter <code>multiply.time</code> allows to multiply values by interval duration (in hours) when
+doing the sum of interval data. This can be used, for example, to obtain total energy (in MWh)
+from power time series (in MW).</p>
   
     </div>
       </div>

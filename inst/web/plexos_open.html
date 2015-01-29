@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-<title>plexos_open. rplexos 0.10</title>
+<title>plexos_open. rplexos 0.12.1</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="author" content="">
 
@@ -20,7 +20,7 @@
     <div class="navbar">
   <div class="navbar-inner">
     <div class="container">
-      <a class="brand" href="#">rplexos 0.10</a>
+      <a class="brand" href="#">rplexos 0.12.1</a>
       <div class="nav">
         <ul class="nav">
           <li><a href="index.html"><i class="icon-home icon-white"></i> Index</a></li>
@@ -50,17 +50,20 @@
       <dd>character. Scenario names</dd>
     </dl>
     
-    <div class="Open all PLEXOS databases">
-      <h2>Open all PLEXOS databases</h2>
-      
-    </div>
-
     <div class="Description">
       <h2>Description</h2>
-      
+
       <p>The default for <code>folders</code> is the working directory. If the wildcard <code>"*"</code> is provided, all
 the folders in the working directory will be processed (the list of folders if provided by
 the <code><a href='list_folders.html'>list_folders</a></code> function).</p>
+  
+    </div>
+
+    <div class="Details">
+      <h2>Details</h2>
+
+      <p>Do not rename the SQLite databases created with the <code><a href='process_folder.html'>process_folder</a></code> family of functions.
+The code expects those filenames to remain unchanged.</p>
   
     </div>
       </div>

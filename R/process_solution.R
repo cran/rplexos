@@ -14,7 +14,7 @@ process_solution <- function(file, keep.temp = FALSE) {
 
   # Database name will match that of the zip file
   db.temp <- gsub(".zip", "-temp.db", file)
-  db.name <- gsub(".zip", ".db", file)
+  db.name <- gsub(".zip", "-rplexos.db", file)
   
   # Delete old files, if possible
   if (file.exists(db.temp)) {
@@ -590,7 +590,7 @@ add_extra_tables <- function(db) {
     dbGetQuery(db$con, sql)
     
     # Fix time stamps in t_period_X (summary data)
-    for (i in 1:length(column.times)) {
+    for (i in seq_along(column.times)) {
       sql <- sprintf("INSERT INTO temp_period_%s
                       SELECT %s, %s, min(interval_id), min(correct_time) time
                       FROM temp_phase_%s

@@ -1,12 +1,13 @@
 Package: rplexos
 Type: Package
-Title: Read and Analyze PLEXOS Solutions from R
-Version: 0.12
-Date: 2015-01-27
-Authors@R: as.person(c(
-    "Eduardo Ibanez <eduardo.ibanez@nrel.gov> [aut, cre]",
-    "National Renewable Energy Laboratory [cph]"
-    ))
+Title: Read and Analyze PLEXOS Solutions
+Version: 0.12.1
+Date: 2015-01-29
+Authors@R: c(
+    person("Eduardo", "Ibanez", , "eduardo.ibanez@nrel.gov", c("aut", "cre")),
+    person("Marcin", "Kalicinski", , "kalita@poczta.onet.pl", "ctb", "for the included RapidXml source"),
+    person("National Renewable Energy Laboratory", role = "cph")
+    )
 Description: Efficiently read and analyze PLEXOS solutions by converting them
     into SQLite databases that can be easily queried. It supports collation of
     solutions that may have been divided into different time partitions,
@@ -20,10 +21,11 @@ Imports: Rcpp, DBI, data.table, lubridate, reshape2, stringi,
 Suggests: knitr
 LinkingTo: Rcpp (>= 0.11.3)
 VignetteBuilder: knitr
-Packaged: 2015-01-27 20:47:16 UTC; eibanez
+Packaged: 2015-02-02 19:55:08 UTC; eibanez
 Author: Eduardo Ibanez [aut, cre],
+  Marcin Kalicinski [ctb] (for the included RapidXml source),
   National Renewable Energy Laboratory [cph]
 Maintainer: Eduardo Ibanez <eduardo.ibanez@nrel.gov>
 NeedsCompilation: yes
 Repository: CRAN
-Date/Publication: 2015-01-27 22:55:56
+Date/Publication: 2015-02-04 21:14:53
