@@ -19,7 +19,6 @@ group_by_char <- function(x, vars) {
   group_by_(x, .dots = dots)
 }
 
-
 #' Get list of valid columns
 #'
 #' List of valid columns accepted in \code{\link{query_master}}, \code{\link{sum_master}} and related functions.
@@ -59,19 +58,6 @@ is_sample_stats <- function(x)
 list_folders <- function() {
   f <- dir()
   f[file.info(f)$isdir]
-}
-
-# dplyr escape function for time-data objects
-escape.POSIXct <- function(x, parens = NA, collapse = ", ", con = NULL) {
-  x <- as.character(x)
-  escape(x, parens = parens, collapse = collapse, con = con)
-}
-
-# Custom function to print debug messages
-rplexos_message <- function(...) {
-  if (getOption("rplexos.debug")) {
-    message("*** rplexos debug: ", ...)
-  }
 }
 
 
@@ -119,10 +105,17 @@ on_failure(correct_phase) <- function(call, env) {
   paste0("'phase' must be one of: 1 (LT), 2 (PASA), 3 (MT) or 4 (ST)")
 }
 
+# Check time
+correct_time <- function(x) x %in% c("interval", "day", "week", "month", "year")
+
+on_failure(correct_time) <- function(call, env) {
+    paste0("'time' must be one of: interval, day, week, month or year")
+}
+
 # Check that a vector of characters are folder names
 is_folder <- function(x) {
   if (length(x) == 1L) {
-    if(x == "*") {
+    if(identical(x, "*")) {
       return(TRUE)
     }
   }

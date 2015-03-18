@@ -1,46 +1,101 @@
-
-# Get query for all scenarios
-query_scenario <- function(db, query) {
-  # Check inputs
-  assert_that(is.rplexos(db), is.string(query))
+# Get one table from a SQLite database
+get_table <- function(filename, table) {
+  # Opern connection
+  thesql <- src_sqlite(filename)
   
-  db %>%
-    do(query_one_row(., query)) %>%
-    ungroup
+  if (table %in% src_tbls(thesql)) {
+    out <- tbl(thesql, table) %>% collect
+  } else {
+    out <- data.frame()
+  }
+  
+  # Close connection
+  DBI::dbDisconnect(thesql$con)
+  
+  # Return result
+  out
 }
 
-# Correctly get query for a row (won't be necessary with future version of dplyr)
-query_one_row <- function(db, query) {
-  res <- dbGetQuery(db$db$con, query)
-  if (nrow(res) == 0)
-    return(data.frame())
+# Get one table from a SQLite database
+get_list_tables <- function(filename) {
+  # Open connection
+  thesql <- src_sqlite(filename)
   
-  data.frame(scenario = db$scenario[1],
-             position = db$position[1],
-             res)
+  # Read names
+  out <- data.frame(tables = src_tbls(thesql))
+  
+  # Close connection
+  DBI::dbDisconnect(thesql$con)
+  
+  # Return result
+  out
+}
+
+#' Get a query for a SQLite file
+#'
+#' Used internally by \code{\link{query_sql}}. Use that function instead to access data. The
+#' use of this function is not recommended
+#'
+#' @param filename SQLite file location
+#' @param sql String containing the SQL query to be performed
+#'
+#' @seealso \code{\link{query_sql}} to perform standard queries of data
+#' 
+#' @keywords internal
+#' @export
+get_query <- function(filename, sql) {
+  out <- data.frame()
+  thesql <- src_sqlite(filename)
+  try(out <- RSQLite::dbGetQuery(thesql$con, sql))
+  DBI::dbDisconnect(thesql$con)
+  out
 }
 
 # Get a table for all scenarios
-get_table_scenario <- function(db, from, columns = c("scenario", "position")) {
+get_table_scenario <- function(db, from) {
   # Check inputs
   assert_that(is.rplexos(db), is.string(from))
   
   db %>%
-    do(get_table_one_scenario(., from, columns)) %>%
-    ungroup
+    group_by(scenario, position, filename) %>%
+    do(get_table(.$filename, from)) %>%
+    ungroup()
 }
 
-# Correctly get query for a row (won't be necessary with future version of dplyr)
-get_table_one_scenario <- function(db, from, columns) {
-  # Check that table exists
-  if (!from %in% src_tbls(db$db)) {
-    return(data.frame())
-  }
-  res <- tbl(db$db, from) %>% collect
-  if (nrow(res) == 0)
-    return(data.frame())
+#' Get query for all scenarios
+#'
+#' Send a SQL query to all the files in a PLEXOS database object.
+#'
+#' @param db PLEXOS database object
+#' @param sql String containing the SQL query to be performed
+#'
+#' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#' @seealso \code{\link{query_master}} to perform standard queries of data
+#' @family special queries
+#' 
+#' @export
+query_sql <- function(db, sql) {
+  # Check inputs
+  assert_that(is.rplexos(db), is.string(sql))
   
-  cbind(db[columns] %>% as.data.frame, res)
+  # Make sure that columns are reported
+  db <- db %>%
+    group_by(scenario, position, filename)
+  
+  # Get query data
+  if (!is_parallel_rplexos()) {
+    out <- db %>%
+      do(get_query(.$filename, sql))
+  } else {
+    out <- foreach(i = db$position, .combine = rbind_list,
+                   .packages = c("dplyr", "rplexos", "DBI", "RSQLite")) %dopar% {
+      db %>%
+        filter(position == i) %>%
+        do(get_query(.$filename, sql))
+    }
+  }
+  
+  out %>% ungroup
 }
 
 #' Get list of available properties
@@ -52,18 +107,15 @@ get_table_one_scenario <- function(db, from, columns) {
 #' @param db PLEXOS database object
 #'
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#' @family special queries
 #'
 #' @export
 query_property <- function(db) {
-  out <- get_table_scenario(db, "property")
-  phases <- c("LT", "PASA", "MT", "ST")
-  phases.df <- data.frame(phase_id = 1:4, phase = factor(phases, levels = phases))
-  out %>%
-    inner_join(phases.df, by = "phase_id") %>%
+  get_table_scenario(db, "property") %>%
+    add_phase_names %>%
     reshape2::dcast(phase_id + phase + is_summary + class_group + class + collection + property + unit ~ scenario,
                     length, value.var = "unit")
 }
-
 
 #' Query configuration tables
 #'
@@ -74,10 +126,11 @@ query_property <- function(db) {
 #' @param db PLEXOS database object
 #'
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#' @family special queries
 #'
 #' @export
 query_config <- function(db) {
-  data <- get_table_scenario(db, "config", columns = c("scenario", "position", "filename"))
+  data <- get_table_scenario(db, "config")
   reshape2::dcast(data, position + scenario + filename ~ element, value.var = "value")
 }
 
@@ -89,16 +142,19 @@ query_config <- function(db) {
 #' @param db PLEXOS database object
 #'
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#' @family special queries
 #'
 #' @export
 query_log <- function(db) {
-  get_table_scenario(db, "log_info", c("scenario", "filename"))
+  get_table_scenario(db, "log_info") %>%
+    select(-position)
 }
 
 #' @rdname query_log
 #' @export
 query_log_steps <- function(db) {
-  get_table_scenario(db, "log_steps", c("scenario", "filename"))
+  get_table_scenario(db, "log_steps") %>%
+    select(-position)
 }
 
 # Query databases ***********************************************************************
@@ -166,41 +222,102 @@ query_log_steps <- function(db) {
 #' @return A data frame that contains data summarized/aggregated by scenario.
 #' 
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
+#' @seealso \code{\link{query_sql}} to perform custom queries
 #' 
 #' @export
+#' @importFrom data.table data.table CJ
+#' @importFrom foreach foreach %dopar%
 query_master <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4) {
   # Check inputs
   assert_that(is.rplexos(db))
   assert_that(is.string(time), is.string(col), is.character(prop), is.character(columns), is.scalar(phase))
-  assert_that(correct_phase(phase))
+  assert_that(correct_time(time), correct_phase(phase))
   assert_that(are_columns(columns))
-  new <- master_checks(db, time, col, prop, columns, time.range, filter, phase)
   
-  # Expand db to include multiple properties (if necessary)
-  db.temp <- expand.grid(position = db$position, property = new$prop) %>%
-    mutate(collection = col)
-  db.prop <- db.temp %>%
-    left_join(db, by = "position")
-  
-  # This function does the queries and attaches columns to the result
-  # until https://github.com/hadley/dplyr/issues/448 is solved
-  # TODO: remove after dplyr 0.3.1 (here and possibly other places)
-  safe_query <- function(x, ...) {
-    out <- query_master_each(x$db, ...)
-    if (nrow(out) == 0)
-      return(data.frame())
-    
-    data.frame(scenario   = x$scenario,
-               position   = x$position,
-               collection = x$collection,
-               property   = x$property,
-               out)
+  # Key filter checks
+  if (!is.null(filter)) {
+    assert_that(is.list(filter))
+    assert_that(names_are_columns(filter))
+    assert_that(time_not_a_name(filter))
   }
   
+  # Time range checks and convert to POSIXct
+  #    time.range2 could be renamed to time.range in the future
+  #    https://github.com/hadley/dplyr/issues/857
+  if (!is.null(time.range)) {
+    assert_that(is.character(time.range), length(time.range) == 2L)
+    time.range2 <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
+    assert_that(correct_date(time.range2))
+  }
+  
+  ### BEGIN: Master query checks
+  
+  # Get list of properties for the collection
+  is.summ <- ifelse(identical(time, "interval"), 0, 1)
+  is.summ.txt <- ifelse(identical(time, "interval"), "interval", "summary")
+  res <- rbind_all(db$properties) %>%
+    filter(collection == col, is_summary == is.summ, phase_id == phase)
+  
+  # Check that collection is valid
+  if (nrow(res) == 0L) {
+    stop("Collection '", col, "' is not valid for ",
+         is.summ.txt, " data and phase '", phase, "'.\n",
+         "   Use query_property() for list of collections and properties.",
+         call. = FALSE)
+  }
+  
+  # Checks if properties are valid
+  if (!identical(prop, "*")) {
+    invalid.prop <- setdiff(prop, res$property)
+     if (length(invalid.prop) > 0L) {
+      stop("Properties ", paste0("'", invalid.prop, "'", collapse = ", "), " in collection '", col,
+           "' are not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
+           "   Use query_property() for list of available collections and properties.",
+           call. = FALSE)
+     }
+  }
+  
+  # Find if the data is going to have multiple sample, timeslices or bands
+  res2 <- res %>%
+    ungroup() %>%
+    filter(property %in% prop) %>%
+    summarize(is_multi_band      = max(count_band) > 1,
+              is_multi_sample    = max(count_sample) > 1,
+              is_multi_timeslice = max(count_timeslice) > 1)
+  if (res2$is_multi_timeslice)
+    columns <- c(setdiff(columns, "timeslice"), "timeslice")
+  if (res2$is_multi_band)
+    columns <- c(setdiff(columns, "band"), "band")
+  if (res2$is_multi_sample)
+    columns <- c(setdiff(columns, "sample"), "sample")
+  
+  # Columns should not include collection and property; they are always reported
+  columns <- setdiff(columns, c("collection", "property"))
+  
+  # If columns include name, add parent automatically
+  if ("name" %in% columns)
+    columns <- c("name", "parent", setdiff(columns, c("name", "parent")))
+  
+  ### END: Master query checks
+  
   # Query data for each property
-  out <- db.prop %>%
-    rowwise() %>%
-    do(safe_query(., time, .$collection, .$property, new$columns, new$time.range, filter, phase))
+  db2 <- db %>%
+    group_by(scenario, position)
+  
+  if (!is_parallel_rplexos()) {
+    out <- db2 %>%
+      do(query_master_each(., time, col, prop, columns, time.range, filter, phase))
+  } else {
+    out <- foreach(i = db2$position, .combine = rbind_list,
+                   .packages = c("dplyr", "rplexos", "DBI", "RSQLite")) %dopar% {
+      db2 %>%
+        filter(position == i) %>%
+        do(query_master_each(., time, col, prop, columns, time.range, filter, phase))
+    }
+  }
+  
+  # Ungroup results
+  out <- out %>% ungroup
   
   # Return empty dataframe if no results were returned
   if (nrow(out) == 0) {
@@ -210,7 +327,10 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
   
   # Check if any scenario is missing from the results
   missing.scenario <- setdiff(unique(db$scenario), unique(out$scenario))
-  if (length(missing.scenario) > 0L) {
+  if (length(missing.scenario) == 1L) {
+    warning("Query returned no results for scenario: ", missing.scenario,,
+            call. = FALSE)
+  } else if (length(missing.scenario) > 1L) {
     warning("Query returned no results for scenarios: ",
             paste(missing.scenario, collapse = ", "),
             call. = FALSE)
@@ -220,12 +340,123 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
   out <- out %>%
     solve_ties()
   
-  # Convert columns to factors
-  for (i in setdiff(columns, "time"))
-    out[[i]] <- factor(out[[i]])
-  
   out
 }
+
+#' Open one database and query data
+#'
+#' Used internally by \code{\link{query_master}}. Use that function instead to access data. The
+#' use of this function is not recommended
+#'
+#' @inheritParams query_master
+#'
+#' @seealso \code{\link{query_master}} to query PLEXOS solutions
+#' 
+#' @keywords internal
+#' @export
+query_master_each <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4) {
+  # Open connection
+  thesql <- src_sqlite(db$filename)
+  
+  if (!identical(time, "interval")) {
+    # Query interval data
+    if (identical(prop, "*")) {
+      out <- tbl(thesql, time)
+    } else if (length(prop) == 1L) {
+      # Workaround for a problem with dplyr
+      out <- tbl(thesql, time) %>% filter(property == prop)
+    } else {
+      out <- tbl(thesql, time) %>% filter(property %in% prop)
+    }
+    
+    out <- out %>%
+      filter(collection == col, phase_id == phase) %>%
+      filter_rplexos(filter) %>%
+      filter_rplexos_time(time.range) %>%
+      select_rplexos(columns, add.key = FALSE) %>%
+      collect %>%
+      mutate(time = lubridate::ymd_hms(time, quiet = TRUE))
+  } else {
+    # Query interval data
+    # Get the table names that store the data
+    if (identical(prop, "*")) {
+      t.name <- db$properties[[1]]
+    } else if(length(prop) == 1L) {
+      t.name <- db$properties[[1]] %>% filter(property == prop)
+    } else {
+      t.name <- db$properties[[1]] %>% filter(property %in% prop)
+    }
+    t.name <- t.name %>%
+      filter(collection == col, phase_id == phase, is_summary == 0) %>%
+      select(collection, property, table_name) %>%
+      mutate(table_name = gsub("data_interval_", "", table_name))
+    
+    # Get max/min time existing in the table to be queried
+    #   In case time table has more time stamps than those in the dataset
+    time.limit <- t.name %>%
+      group_by(collection, property) %>%
+      do(
+        tbl(thesql, .$table_name) %>%
+          filter(phase_id == phase) %>%
+          summarize(time_from = min(time_from), time_to = max(time_to)) %>%
+          collect
+      )
+    min.time.data <- min(time.limit$time_from)
+    max.time.data <- max(time.limit$time_to)
+    
+    # Collect time data
+    time.data <- tbl(thesql, "time") %>%
+      filter(phase_id == phase) %>%
+      filter(between(time, min.time.data, max.time.data)) %>%
+      filter_rplexos_time(time.range) %>%
+      select(time) %>%
+      collect
+    
+    # If time data is empty, return an empty data frame
+    if (nrow(time.data) == 0L) {
+      DBI::dbDisconnect(thesql$con)
+      return(data.frame())
+    }
+    
+    # Convert into R time-data format
+    time.data$time <- lubridate::ymd_hms(time.data$time)
+    
+    # Get interval data
+    out <- t.name %>%
+      group_by(collection, property) %>%
+      do(tbl(thesql, .$table_name) %>%
+           filter(phase_id == phase) %>%
+           filter_rplexos(filter) %>%
+           filter_rplexos_time(time.range, modified = TRUE) %>%
+           select(-time_to) %>%
+           rename(time = time_from) %>%
+           select_rplexos(columns, add.key = TRUE) %>%
+           collect
+      ) %>%
+      ungroup %>%
+      mutate(time = lubridate::ymd_hms(time))
+  
+    # Expand data
+    #   This will be easier when dplyr supports rolling joins
+    out2 <- data.table(out, key = "key,time")
+    cj2 <- CJ(key = unique(out$key), time = time.data$time)
+    
+    out3 <- out2[cj2, roll = TRUE]
+    out <- out3 %>%
+      as.data.frame(stringsAsFactors = FALSE) %>%
+      select(-key)
+    
+    # Restore time zone
+    attributes(out$time) <- attributes(time.data$time)
+  }
+  
+  # Disconnect database
+  DBI::dbDisconnect(thesql$con)
+  
+  # Return value
+  return(out)
+}
+
 
 # Deal with repeats
 solve_ties <- function(x, opt = getOption("rplexos.tiebreak")) {
@@ -243,7 +474,7 @@ solve_ties <- function(x, opt = getOption("rplexos.tiebreak")) {
       ungroup() %>%
       group_by(scenario, time)
     
-    if (opt == "last") {
+    if (identical(opt, "last")) {
       # If there are repeats, use the latter entry
       x2 <- x2 %>%
         filter(position == max(position))
@@ -278,124 +509,6 @@ query_month    <- function(db, ...) query_master(db, "month", ...)
 #' @export
 query_year     <- function(db, ...) query_master(db, "year", ...)
 
-# Query interval for each database
-#' @importFrom data.table data.table CJ
-query_master_each <- function(db, time, col, prop, columns, time.range, filter, phase, table.name) {
-  # Divide time.range vector
-  if (!is.null(time.range)) {
-    time.r.min <- time.range[1]
-    time.r.max <- time.range[2]
-  }
-  
-  # Summary data
-  if (time != "interval") {
-    # Check that time table has any data
-    count <- tbl(db, time) %>%
-      summarize(rows = n()) %>%
-      collect
-    if (count$rows == 0) {
-        warning("Summary table '", time, "' is empty for database '", db$info$dbname, "'.\n",
-                "    Returning an empty result.", call. = FALSE)
-        return(data.frame())
-    }
-    
-    # Get data
-    out <- tbl(db, time) %>%
-      filter(collection == col, property == prop, phase_id == phase) %>%
-      filter_rplexos(filter)
-    
-    # Add time filter condition
-    if (!is.null(time.range)) {
-      out <- out %>% filter(between(time, time.r.min, time.r.max))
-    }
-    
-    # Add time and value columns
-    columns.dots <- c("unit", setdiff(columns, "time"), "time", "value") %>%
-      as.list %>%
-      lapply(as.symbol)
-    
-    # Query and format
-    out <- out %>%
-      select_(.dots = columns.dots) %>%
-      collect %>%
-      mutate(time = lubridate::ymd_hms(time, quiet = TRUE))
-    
-    return(out)
-  }
-  
-  # Get the table name that stores the data
-  t.name <- tbl(db, "property") %>%
-    filter(collection == col, property == prop, phase_id == phase, is_summary == 0) %>%
-    collect
-  the.table.name <- gsub("data_interval_", "", t.name$table_name)
-  
-  # Get max/min time existing in the table to be queried
-  #   In case time table has more time stamps than those in the dataset
-  time.limit <- tbl(db, the.table.name) %>%
-      filter(phase_id == phase) %>%
-      summarize(time_from = min(time_from), time_to = max(time_to)) %>%
-      collect
-  min.time.data <- time.limit$time_from
-  max.time.data <- time.limit$time_to
-  
-  # Interval data, Get time data
-  time.data <- tbl(db, "time") %>%
-    filter(between(time, min.time.data, max.time.data))
-  
-  # Get interval data
-  out <- tbl(db, the.table.name) %>%
-    filter(phase_id == phase) %>%
-    select(-time_to) %>%
-    rename(time = time_from)
-  
-  # Add time filter conditions
-  if (!is.null(time.range)) {
-    time.data <- time.data %>%
-      filter(between(time, time.r.min, time.r.max))
-    out <- out %>%
-      filter(time_from <= time.r.max, time_to >= time.r.min) %>%
-      filter_rplexos(filter)
-  }
-  
-  # Collect time data
-  time.data <- time.data %>%
-    select(time) %>%
-    collect
-  
-  # If time data is empty, return an empty data frame
-  if (nrow(time.data) == 0)
-    return(data.frame())
-  
-  # Convert into R time-data format
-  time.data$time <- lubridate::ymd_hms(time.data$time)
-    
-  # Add key, time and value columns
-  columns.dots <- c("key", "unit", setdiff(columns, "time"), "time", "value") %>%
-    as.list %>%
-    lapply(as.symbol)
-  
-  # Query and format
-  out <- out %>%
-    select_(.dots = columns.dots) %>%
-    collect %>%
-      mutate(time = lubridate::ymd_hms(time, quiet = TRUE))
-  
-  # Expand data
-  #   This will be easier when dplyr supports rolling joins
-  out2 <- data.table(out, key = "key,time")
-  cj2 <- CJ(key = unique(out$key), time = time.data$time)
-  
-  out3 <- out2[cj2, roll = TRUE]
-  out3 <- out3 %>%
-    as.data.frame %>%
-    select(-key)
-  
-  # Restore time zone
-  attributes(out3$time) <- attributes(time.data$time)
-  
-  out3
-}
-
 
 # Aggregation ***************************************************************************
 
@@ -412,16 +525,16 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
   df <- query_master(db, time, col, prop, columns2, time.range, filter, phase)
   
   # If empty query is returned, return empty data.frame
-  if(nrow(df) == 0)
+  if(nrow(df) == 0L)
     return(data.frame())
   
   # Aggregate the data
   out <- df %>% group_by_char(c("scenario", "collection", "property", columns2)) %>%
     summarise(value = sum(value))
   
-  if ((time == "interval") & multiply.time) {
+  if (identical(time, "interval") & multiply.time) {
     # Get length of intervals in hours
-    times <- get_table_scenario(d, "time", "scenario")
+    times <- get_table_scenario(d, "time")
     delta <- times %>%
       group_by(scenario) %>%
       mutate(time = lubridate::ymd_hms(time)) %>%
@@ -466,86 +579,22 @@ sum_month    <- function(db, ...) sum_master(db, "month", ...)
 #' @export
 sum_year     <- function(db, ...) sum_master(db, "year", ...)
 
-# Checks and common data maniputation for query_master and sum_master
-master_checks <- function(db, time, col, prop, columns, time.range, filter, phase) {
-  # Get list of properties for the collection
-  is.summ <- ifelse(time == "interval", 0, 1)
-  is.summ.txt <- ifelse(time == "interval", "interval", "summary")
-  res <- get_table_scenario(db, "property") %>%
-    filter(collection == col, is_summary == is.summ, phase_id == phase) %>%
-    collect
-  
-  # Check that collection is valid
-  if (nrow(res) == 0) {
-    stop("Collection '", col, "' is not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
-         "   Use query_property() for list of collections and properties.",
-         call. = FALSE)
-  }
-  
-  # Checks if property is the wildcard symbol
-  if (length(prop) == 1L) {
-    if (prop == "*")
-      prop <- unique(res$property)
-  }
-  
-  # Check that all properties are valid
-  invalid.prop <- setdiff(prop, res$property)
-  if (length(invalid.prop) == 1L) {
-    stop("Property '", invalid.prop, "' in collection '", col, "' is not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
-         "   Use query_property() for list of available collections and properties.",
-         call. = FALSE)
-  } else if (length(invalid.prop) > 1L) {
-    stop("Properties ", paste0("'", invalid.prop, "'", collapse = ", "), " in collection '", col,
-         "' are not valid for ", is.summ.txt, " data and phase '", phase, "'.\n",
-         "   Use query_property() for list of available collections and properties.",
-         call. = FALSE)
-  }
-  
-  # Find if the data is going to have multiple sample, timeslices or bands
-  res2 <- res %>%
-    ungroup() %>%
-    filter(property %in% prop) %>%
-    summarize(is_multi_band      = max(count_band) > 1,
-              is_multi_sample    = max(count_sample) > 1,
-              is_multi_timeslice = max(count_timeslice) > 1)
-  if (res2$is_multi_timeslice)
-    columns <- c(setdiff(columns, "timeslice"), "timeslice")
-  if (res2$is_multi_band)
-    columns <- c(setdiff(columns, "band"), "band")
-  if (res2$is_multi_sample)
-    columns <- c(setdiff(columns, "sample"), "sample")
-  
-  # Key filter checks
-  if (!is.null(filter)) {
-    assert_that(is.list(filter))
-    assert_that(names_are_columns(filter))
-    assert_that(time_not_a_name(filter))
-  }
-  
-  # Columns should not include collection and property; they are always reported
-  columns <- setdiff(columns, c("collection", "property"))
-  
-  # If columns include name, add parent automatically
-  if ("name" %in% columns)
-    columns <- c("name", "parent", setdiff(columns, c("name", "parent")))
-  
-  # Time range checks and convert to POSIXct
-  if (!is.null(time.range)) {
-    assert_that(is.character(time.range), length(time.range) == 2L)
-    time.range <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
-    assert_that(correct_date(time.range))
-  }
-  
-  list(prop = prop, columns = columns, time.range = time.range) 
-}
-
-# Fix problem with filtering times in dplyr
-#    May be addressed in dplyr in the future
-#    https://github.com/hadley/dplyr/issues/857
-escape.POSIXct <- dplyr:::escape.Date
-
 
 # Filtering *****************************************************************************
+
+# Time filter
+filter_rplexos_time <- function(out, time.range, modified = FALSE) {
+  # Do nothing if time.range is empty
+  if (!is.null(time.range)) {
+    if (modified) {
+      out <- filter(out, time_from <= time.range[2], time_to >= time.range[1])
+    } else {
+      out <- filter(out, between(time, time.range[1], time.range[2]))
+    }
+  }
+  
+  out
+}
 
 # Other filters
 filter_rplexos <- function(out, filt) {
@@ -559,9 +608,24 @@ filter_rplexos <- function(out, filt) {
   vals <- lapply(filt, function(x)
     paste0("\"", x, "\"", collapse = ", ")) %>%
     paste0("c(", ., ")")
-  cons <- ifelse(lapply(filt, length) == 1, "==", "%in%")
+  cons <- ifelse(lapply(filt, length) == 1L, "==", "%in%")
   cond <- paste(names(filt), cons, vals)
   
   # Apply condition
   out %>% filter_(.dots = cond)
+}
+
+# Dynamically select the columns
+select_rplexos <- function(x, columns, add.key) {
+  if (add.key) {
+    columns.dots <- c("key", "unit", setdiff(columns, "time"), "time", "value")
+  } else {
+    columns.dots <- c("collection", "property", "unit", setdiff(columns, "time"), "time", "value")
+  }
+  
+  columns.dots <- columns.dots %>%
+    as.list %>%
+    lapply(as.symbol)
+  
+  select_(x, .dots = columns.dots)
 }
