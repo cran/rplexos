@@ -193,7 +193,8 @@ query_log_steps <- function(db) {
 #' \code{filter = list(name = c("Generator1", "Generator2"), region = "Region1")}
 #' 
 #' To filter by time use the \code{time.range} parameter, instead of adding it as an entry in the
-#' \code{filter} parameter.
+#' \code{filter} parameter. For example use \code{c("2015-03-14", "2015-03-15")} in your query.
+#' Please note that the year/month/date starts at midnight (00:00:00).
 #' 
 #' If a scenario has multiple databases, the data will be aggregated automatically. If two or more
 #' databases within the same scenario have overlapping time periods, the default is to select the
@@ -213,7 +214,7 @@ query_log_steps <- function(db) {
 #' @param col character. Collection to query
 #' @param prop character vector. Property or properties to query
 #' @param columns character. Data columns to query or aggregate by (defaults to \code{name})
-#' @param time.range character. Range of dates (Give in 'ymdhms' or 'ymd' format)
+#' @param time.range character. Range of dates of length 2 (given in 'ymdhms' or 'ymd' format)
 #' @param filter list. Used to filter by data columns (see details)
 #' @param phase integer. PLEXOS optimization phase (1-LT, 2-PASA, 3-MT, 4-ST)
 #' @param multiply.time boolean. When summing interval data, provide the value multiplied by interval duration (See details).
@@ -248,6 +249,12 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
     assert_that(is.character(time.range), length(time.range) == 2L)
     time.range2 <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
     assert_that(correct_date(time.range2))
+    
+    # If second entry is given as YMD, the result is might not be correct,
+    #   especially if the two entries are the same
+    if (lubridate::floor_date(time.range2[2]) == time.range2[2]) {
+      time.range[2] <- paste(time.range[2], "00:00:00")
+    }
   }
   
   ### BEGIN: Master query checks
@@ -275,12 +282,15 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
            "   Use query_property() for list of available collections and properties.",
            call. = FALSE)
      }
+    
+    # Filter properties
+    res <- res %>%
+      filter(property %in% prop)
   }
   
   # Find if the data is going to have multiple sample, timeslices or bands
   res2 <- res %>%
     ungroup() %>%
-    filter(property %in% prop) %>%
     summarize(is_multi_band      = max(count_band) > 1,
               is_multi_sample    = max(count_sample) > 1,
               is_multi_timeslice = max(count_timeslice) > 1)
@@ -522,19 +532,15 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
   columns2 <- c(setdiff(columns, "time"), "time")
   
   # Run query_master to get the raw data
-  df <- query_master(db, time, col, prop, columns2, time.range, filter, phase)
+  out <- query_master(db, time, col, prop, columns2, time.range, filter, phase)
   
   # If empty query is returned, return empty data.frame
-  if(nrow(df) == 0L)
+  if(nrow(out) == 0L)
     return(data.frame())
   
-  # Aggregate the data
-  out <- df %>% group_by_char(c("scenario", "collection", "property", columns2)) %>%
-    summarise(value = sum(value))
-  
-  if (identical(time, "interval") & multiply.time) {
+  if (identical(time, "interval") && (!"time" %in% columns) && multiply.time) {
     # Get length of intervals in hours
-    times <- get_table_scenario(d, "time")
+    times <- get_table_scenario(db, "time")
     delta <- times %>%
       group_by(scenario) %>%
       mutate(time = lubridate::ymd_hms(time)) %>%
@@ -543,6 +549,7 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
     # Add interval duration to the sum
     out <- out %>%
       inner_join(delta, by = "scenario") %>%
+      group_by_char(c("scenario", "collection", "property", columns)) %>%
       summarise(value = sum(value * interval))  
     
     # If unit is a column, modify column
@@ -553,12 +560,9 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
   } else {
     # Sum values
     out <- out %>%
+      group_by_char(c("scenario", "collection", "property", columns)) %>%
       summarise(value = sum(value))  
   }
-  
-  # Convert columns to factors
-  for (i in setdiff(columns2, "time"))
-    out[[i]] <- factor(out[[i]])
   
   out
 }
