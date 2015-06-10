@@ -19,6 +19,17 @@ test_that("Expected errors and warnings", {
   expect_warning(plexos_open(c(loc, locERR)))
 })
 
+test_that("Query errors", {
+  expect_error(query_interval(db, "Generator", "Gen"))
+  expect_error(query_interval(db, "Gen", "Generation"))
+  expect_error(query_interval(db, "Generator", "Generation", phase = 3))
+  expect_error(query_interval(db, "Generator", "Generation", filter = c("2010-13-10", "2011-14-01")))
+  expect_error(query_interval(db, "Generator", "Generation", filter = c("2010-01-10", "2011-01-01")))
+  expect_error(query_interval(db, "Generator", "Generation", filter = list(time = c("2010-01-10", "2011-01-01"))))
+  expect_warning(query_interval(db, "Generator", "Generation", filter = list(name = "test")))
+  expect_warning(query_interval(db, "Generator", "Generation", time.range = c("2010-01-10", "2011-01-01")))
+})
+
 try(qday <- query_day(db, "Generator", "Generation"))
 try(qint <- query_interval(db, "Generator", "Generation"))
 try(qday2 <- query_day(db, "Generator", "Generation", c("region", "name")))
@@ -84,6 +95,9 @@ test_that("Filters in queries", {
   expect_equal(query_interval(db, "Generator", "Generation", time.range = allTimeDD), qint)
   expect_equal(query_interval(db, "Generator", "Generation", time.range = allTimeHH), qint)
   
+  expect_identical(query_day(db, "Generator", "Generation", time.range = as.POSIXct(oneTimeDD)) %>% nrow, 3L)
+  expect_identical(query_day(db, "Generator", "Generation", time.range = as.POSIXct(oneTimeHH)) %>% nrow, 3L)
+  
   expect_identical(query_day(db, "Generator", "Generation", time.range = oneTimeDD) %>% nrow, 3L)
   expect_identical(query_day(db, "Generator", "Generation", time.range = oneTimeHD) %>% nrow, 3L)
   expect_identical(query_day(db, "Generator", "Generation", time.range = oneTimeDH) %>% nrow, 3L)
@@ -104,6 +118,12 @@ test_that("Filters in queries", {
   
   expect_identical(query_interval(db, "Generator", "Generation", filter = lstWin, time.range = halfTimeHD) %>% nrow, 12L)
   expect_identical(query_interval(db, "Generator", "Generation", filter = lstWin, time.range = halfTimeHH) %>% nrow, 12L)
+})
+
+lstNot <- list(name = "GenNotPresent")
+test_that("Empty queries", {
+  expect_identical(query_day(db, "Generator", "Generation", filter = lstNot) %>% nrow, 0L)
+  expect_identical(query_interval(db, "Generator", "Generation", filter = lstNot) %>% nrow, 0L)
 })
 
 test_that("Sum queries", {
@@ -168,10 +188,6 @@ test_that("Auxiliary queries", {
   expect_identical(query_class_member(db, "Line") %>% nrow, 3L)
   expect_identical(query_class_member(db, "Region") %>% nrow, 1L)
   
-  expect_identical(query_class_member(db, "Generator"), query_generator(db))
-  expect_identical(query_class_member(db, "Region"), query_region(db))
-  expect_identical(query_class_member(db, "Zone"), query_zone(db))
-  
   qconfig <- query_config(db)
   expect_is(qconfig, "data.frame")
   expect_identical(nrow(qconfig), 1L)
@@ -183,5 +199,3 @@ test_that("Auxiliary queries", {
                  "unit", db$scenario[1] %>% as.character))
   expect_identical(nrow(qproperty), 35L)
 })
-
-

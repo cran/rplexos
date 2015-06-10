@@ -4,7 +4,7 @@
 #'
 #' Get the list of phases, samples, timeslices and bands  that are available in each database.
 #'
-#' @param db PLEXOS database object
+#' @inheritParams query_master
 #'
 #' @family special queries
 #' 
@@ -61,7 +61,7 @@ query_class <- function(db) {
 #' Get the list of objects and classes in each database. Shortcuts for generators, regions and zones
 #' are provided for convenience.
 #'
-#' @param db PLEXOS database object
+#' @inheritParams query_master
 #' @param class Type of class to query
 #'
 #' @family special queries
@@ -76,21 +76,31 @@ query_class_member <- function(db, class) {
 
 #' @rdname query_class_member
 #' @export
-query_generator <- function(db) query_class_member(db, "Generator")
+query_generator <- function(db) {
+  query_class_member(db, "Generator") %>%
+    filter(parent == "System") %>%
+    select(-parent)
+}
 
 #' @rdname query_class_member
 #' @export
-query_region    <- function(db) query_class_member(db, "Region")
+query_region <- function(db) {
+  query_class_member(db, "Region") %>%
+    select(-region, -zone)
+}
 
 #' @rdname query_class_member
 #' @export
-query_zone      <- function(db) query_class_member(db, "Zone")
+query_zone <- function(db) {
+  query_class_member(db, "Zone") %>%
+    select(-region, -zone)
+}
 
 #' Get time spans from all databases
 #'
 #' Get the time limits and time step lengths for each simulation phase.
 #'
-#' @param db PLEXOS database object
+#' @inheritParams query_master
 #'
 #' @family special queries
 #' 
@@ -100,8 +110,8 @@ query_time <- function(db) {
           FROM time GROUP BY phase_id"
   query_sql(db, sql) %>%
     add_phase_names %>%
-    mutate(start = lubridate::ymd_hms(start),
-           end = lubridate::ymd_hms(end),
+    mutate(start = lubridate::ymd_hms(start, quiet = TRUE),
+           end = lubridate::ymd_hms(end, quiet = TRUE),
            timestep = difftime(end, start, units = "mins") / (count - 1)) %>%
     select(scenario, position, phase_id, phase, start, end, count, timestep) %>%
     arrange(position, phase_id)

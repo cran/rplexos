@@ -1,7 +1,7 @@
 # Get one table from a SQLite database
 get_table <- function(filename, table) {
-  # Opern connection
-  thesql <- src_sqlite(filename)
+  # Open connection
+  thesql <- src_sqlite(filename, create = FALSE)
   
   if (table %in% src_tbls(thesql)) {
     out <- tbl(thesql, table) %>% collect
@@ -19,7 +19,7 @@ get_table <- function(filename, table) {
 # Get one table from a SQLite database
 get_list_tables <- function(filename) {
   # Open connection
-  thesql <- src_sqlite(filename)
+  thesql <- src_sqlite(filename, create = FALSE)
   
   # Read names
   out <- data.frame(tables = src_tbls(thesql))
@@ -45,7 +45,7 @@ get_list_tables <- function(filename) {
 #' @export
 get_query <- function(filename, sql) {
   out <- data.frame()
-  thesql <- src_sqlite(filename)
+  thesql <- src_sqlite(filename, create = FALSE)
   try(out <- RSQLite::dbGetQuery(thesql$con, sql))
   DBI::dbDisconnect(thesql$con)
   out
@@ -54,7 +54,8 @@ get_query <- function(filename, sql) {
 # Get a table for all scenarios
 get_table_scenario <- function(db, from) {
   # Check inputs
-  assert_that(is.rplexos(db), is.string(from))
+  check_rplexos(db)
+  stopifnot(is.character(from), length(from) == 1L)
   
   db %>%
     group_by(scenario, position, filename) %>%
@@ -66,17 +67,28 @@ get_table_scenario <- function(db, from) {
 #'
 #' Send a SQL query to all the files in a PLEXOS database object.
 #'
-#' @param db PLEXOS database object
+#' @inheritParams query_master
 #' @param sql String containing the SQL query to be performed
 #'
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #' @seealso \code{\link{query_master}} to perform standard queries of data
 #' @family special queries
 #' 
+#' @examples
+#' # Process the folder with the solution file provided by rplexos
+#' location <- location_solution_rplexos()
+#' process_folder(location)
+#' 
+#' # Query data
+#' db <- plexos_open(location)
+#' query_sql(db, "SELECT * from day")
+#' query_sql(db, "SELECT * from time")
+#' 
 #' @export
 query_sql <- function(db, sql) {
   # Check inputs
-  assert_that(is.rplexos(db), is.string(sql))
+  check_rplexos(db)
+  stopifnot(is.character(sql), length(sql) == 1L)
   
   # Make sure that columns are reported
   db <- db %>%
@@ -104,17 +116,27 @@ query_sql <- function(db, sql) {
 #' Additionally, a column is created for each scenario that indicates in how many databases
 #' the property appears.
 #'
-#' @param db PLEXOS database object
-#'
+#' @inheritParams query_master
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #' @family special queries
-#'
+#' 
+#' @examples
+#' # Process the folder with the solution file provided by rplexos
+#' location <- location_solution_rplexos()
+#' process_folder(location)
+#' 
+#' # Query data
+#' db <- plexos_open(location)
+#' query_property(db)
+#' 
 #' @export
 query_property <- function(db) {
   get_table_scenario(db, "property") %>%
     add_phase_names %>%
-    reshape2::dcast(phase_id + phase + is_summary + class_group + class + collection + property + unit ~ scenario,
-                    length, value.var = "unit")
+    group_by(phase_id, phase, is_summary, class_group, class, collection, property, unit, scenario) %>%
+    summarize(n = n()) %>%
+    tidyr::spread(scenario, n) %>%
+    as.data.frame
 }
 
 #' Query configuration tables
@@ -123,15 +145,24 @@ query_property <- function(db) {
 #' date and time, machine and location of PLEXOS input database, model description and user
 #' name. Additionally, it stores the version of rplexos used to process the PLEXOS database.
 #'
-#' @param db PLEXOS database object
-#'
+#' @inheritParams query_master
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #' @family special queries
+#'
+#' @examples
+#' # Process the folder with the solution file provided by rplexos
+#' location <- location_solution_rplexos()
+#' process_folder(location)
+#' 
+#' # Query data
+#' db <- plexos_open(location)
+#' query_config(db)
 #'
 #' @export
 query_config <- function(db) {
   data <- get_table_scenario(db, "config")
-  reshape2::dcast(data, position + scenario + filename ~ element, value.var = "value")
+    tidyr::spread(data, element, value) %>%
+    as.data.frame
 }
 
 #' Query log file information
@@ -139,11 +170,20 @@ query_config <- function(db) {
 #' During the processing of the PLEXOS databases, information from the log file is saved
 #' into the database. This includes solution times and infeasibilities for the different phases.
 #'
-#' @param db PLEXOS database object
-#'
+#' @inheritParams query_master
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #' @family special queries
 #'
+#' @examples
+#' # Process the folder with the solution file provided by rplexos
+#' location <- location_solution_rplexos()
+#' process_folder(location)
+#' 
+#' # Query data
+#' db <- plexos_open(location)
+#' query_log(db)
+#' query_log_steps(db)
+#' 
 #' @export
 query_log <- function(db) {
   get_table_scenario(db, "log_info") %>%
@@ -214,7 +254,7 @@ query_log_steps <- function(db) {
 #' @param col character. Collection to query
 #' @param prop character vector. Property or properties to query
 #' @param columns character. Data columns to query or aggregate by (defaults to \code{name})
-#' @param time.range character. Range of dates of length 2 (given in 'ymdhms' or 'ymd' format)
+#' @param time.range POSIXt or character. Range of dates of length 2 (given as date, datetime or character in 'ymdhms' or 'ymd' format)
 #' @param filter list. Used to filter by data columns (see details)
 #' @param phase integer. PLEXOS optimization phase (1-LT, 2-PASA, 3-MT, 4-ST)
 #' @param multiply.time boolean. When summing interval data, provide the value multiplied by interval duration (See details).
@@ -225,36 +265,62 @@ query_log_steps <- function(db) {
 #' @seealso \code{\link{plexos_open}} to create the PLEXOS database object
 #' @seealso \code{\link{query_sql}} to perform custom queries
 #' 
+#' @examples
+#' # Process the folder with the solution file provided by rplexos
+#' location <- location_solution_rplexos()
+#' process_folder(location)
+#' 
+#' # Query data
+#' db <- plexos_open(location)
+#' query_day(db, "Generator", "Generation")
+#' query_day(db, "Region", "*")
+#' query_interval(db, "Generator", "Generation")
+#' 
 #' @export
 #' @importFrom data.table data.table CJ
 #' @importFrom foreach foreach %dopar%
 query_master <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4) {
   # Check inputs
-  assert_that(is.rplexos(db))
-  assert_that(is.string(time), is.string(col), is.character(prop), is.character(columns), is.scalar(phase))
-  assert_that(correct_time(time), correct_phase(phase))
-  assert_that(are_columns(columns))
+  check_rplexos(db)
+  stopifnot(is.character(time), length(time) == 1L)
+  stopifnot(is.character(col), length(col) == 1L)
+  stopifnot(is.character(prop), is.character(columns))
+  stopifnot(is.numeric(phase), length(phase) == 1L)
+  if (!time %in% c("interval", "day", "week", "month", "year"))
+    stop("'time' must be one of: interval, day, week, month or year", call. = FALSE)
+  if(!phase %in% 1:4)
+    stop("'phase' must be one of: 1 (LT), 2 (PASA), 3 (MT) or 4 (ST)", call. = FALSE)
+  if(!all(columns %in% valid_columns()))
+    stop("Incorrect column parameter. Use valid_columns() to get the full list.", call. = FALSE)
   
   # Key filter checks
   if (!is.null(filter)) {
-    assert_that(is.list(filter))
-    assert_that(names_are_columns(filter))
-    assert_that(time_not_a_name(filter))
+    stopifnot(is.list(filter))
+    if ("time" %in% names(filter))
+      stop("time should not be an entry in filter. Use time.range instead.", call. = FALSE)
+    if(!all(names(filter) %in% valid_columns()))
+      stop("The names in 'filter' must correspond to correct columns. Use valid_columns() to get the full list.", call. = FALSE)
   }
   
-  # Time range checks and convert to POSIXct
-  #    time.range2 could be renamed to time.range in the future
-  #    https://github.com/hadley/dplyr/issues/857
+  # Time range checks
   if (!is.null(time.range)) {
-    assert_that(is.character(time.range), length(time.range) == 2L)
-    time.range2 <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
-    assert_that(correct_date(time.range2))
+    stopifnot(length(time.range) == 2L)
     
-    # If second entry is given as YMD, the result is might not be correct,
-    #   especially if the two entries are the same
-    if (lubridate::floor_date(time.range2[2]) == time.range2[2]) {
-      time.range[2] <- paste(time.range[2], "00:00:00")
+    if (inherits(time.range, "POSIXt")) {
+      time.range2 <- time.range
+    } else {
+      time.range2 <- c(NA, NA)
+      
+      if (inherits(time.range, "character")) {
+        time.range2 <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
+      }
+      
+      if(any(is.na(time.range2)))
+        stop("time.range must be POSIXt or character with 'ymdhms' or 'ymd' formats", call. = FALSE)
     }
+    
+    # Convert dates to ymdhms format, so that queries work correctly
+    time.range <- format(time.range2, "%Y-%m-%d %H:%M:%S")
   }
   
   ### BEGIN: Master query checks
@@ -337,11 +403,8 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
   
   # Check if any scenario is missing from the results
   missing.scenario <- setdiff(unique(db$scenario), unique(out$scenario))
-  if (length(missing.scenario) == 1L) {
-    warning("Query returned no results for scenario: ", missing.scenario,,
-            call. = FALSE)
-  } else if (length(missing.scenario) > 1L) {
-    warning("Query returned no results for scenarios: ",
+  if (length(missing.scenario) >= 1L) {
+    warning("Query returned no results for scenario(s): ",
             paste(missing.scenario, collapse = ", "),
             call. = FALSE)
   }
@@ -366,7 +429,7 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
 #' @export
 query_master_each <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4) {
   # Open connection
-  thesql <- src_sqlite(db$filename)
+  thesql <- src_sqlite(db$filename, create = FALSE)
   
   if (!identical(time, "interval")) {
     # Query interval data
@@ -401,6 +464,12 @@ query_master_each <- function(db, time, col, prop, columns = "name", time.range 
       select(collection, property, table_name) %>%
       mutate(table_name = gsub("data_interval_", "", table_name))
     
+    # If t.name is empty (data is not available), return an empty data frame
+    if (nrow(t.name) == 0L) {
+      DBI::dbDisconnect(thesql$con)
+      return(data.frame())
+    }
+    
     # Get max/min time existing in the table to be queried
     #   In case time table has more time stamps than those in the dataset
     time.limit <- t.name %>%
@@ -429,10 +498,10 @@ query_master_each <- function(db, time, col, prop, columns = "name", time.range 
     }
     
     # Convert into R time-data format
-    time.data$time <- lubridate::ymd_hms(time.data$time)
+    time.data$time <- lubridate::ymd_hms(time.data$time, quiet = TRUE)
     
     # Get interval data
-    out <- t.name %>%
+    out1 <- t.name %>%
       group_by(collection, property) %>%
       do(tbl(thesql, .$table_name) %>%
            filter(phase_id == phase) %>%
@@ -444,12 +513,12 @@ query_master_each <- function(db, time, col, prop, columns = "name", time.range 
            collect
       ) %>%
       ungroup %>%
-      mutate(time = lubridate::ymd_hms(time))
+      mutate(time = lubridate::ymd_hms(time, quiet = TRUE))
   
     # Expand data
     #   This will be easier when dplyr supports rolling joins
-    out2 <- data.table(out, key = "key,time")
-    cj2 <- CJ(key = unique(out$key), time = time.data$time)
+    out2 <- data.table(out1, key = "key,time")
+    cj2 <- CJ(key = unique(out1$key), time = time.data$time)
     
     out3 <- out2[cj2, roll = TRUE]
     out <- out3 %>%
@@ -526,7 +595,7 @@ query_year     <- function(db, ...) query_master(db, "year", ...)
 #' @export
 sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL, filter = NULL, phase = 4, multiply.time = FALSE) {
   # Check inputs to unique
-  assert_that(is.flag(multiply.time))
+  stopifnot(is.logical(multiply.time), length(multiply.time) == 1L)
 
   # Make sure to include time
   columns2 <- c(setdiff(columns, "time"), "time")
@@ -543,8 +612,10 @@ sum_master <- function(db, time, col, prop, columns = "name", time.range = NULL,
     times <- get_table_scenario(db, "time")
     delta <- times %>%
       group_by(scenario) %>%
-      mutate(time = lubridate::ymd_hms(time)) %>%
-      summarize(interval = min(lubridate::int_length(lubridate::int_diff(time))) / 3600)
+      mutate(time = lubridate::ymd_hms(time, quiet = TRUE)) %>%
+      summarize(interval = difftime(lead(time), time, units = "hours") %>%
+                  min(na.rm = TRUE) %>%
+                  as.numeric)
     
     # Add interval duration to the sum
     out <- out %>%

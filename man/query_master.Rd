@@ -52,7 +52,7 @@ sum_year(db, ...)
 
 \item{columns}{character. Data columns to query or aggregate by (defaults to \code{name})}
 
-\item{time.range}{character. Range of dates of length 2 (given in 'ymdhms' or 'ymd' format)}
+\item{time.range}{POSIXt or character. Range of dates of length 2 (given as date, datetime or character in 'ymdhms' or 'ymd' format)}
 
 \item{filter}{list. Used to filter by data columns (see details)}
 
@@ -114,6 +114,17 @@ Multiple properties can be queried within a collection. If \code{prop} equals th
 The parameter \code{multiply.time} allows to multiply values by interval duration (in hours) when
 doing the sum of interval data. This can be used, for example, to obtain total energy (in MWh)
 from power time series (in MW).
+}
+\examples{
+# Process the folder with the solution file provided by rplexos
+location <- location_solution_rplexos()
+process_folder(location)
+
+# Query data
+db <- plexos_open(location)
+query_day(db, "Generator", "Generation")
+query_day(db, "Region", "*")
+query_interval(db, "Generator", "Generation")
 }
 \seealso{
 \code{\link{plexos_open}} to create the PLEXOS database object

@@ -27,15 +27,24 @@
 #' @param keep.temp Should temporary databases be preserved?
 #'
 #' @examples
+#' # Process the folder with the solution file provided by rplexos
+#' location <- location_solution_rplexos()
+#' process_folder(location)
+#' 
+#' # Process the folder with the input file provided by rplexos
+#' location2 <- location_input_rplexos()
+#' process_folder(location2)
+#' 
+#' # Other examples
 #' \dontrun{process_folder()}
-#' \dontrun{process_folder("HiWind")}
 #' \dontrun{process_solution("HiWind/Model WWSIS_c_RT_CoreB_M01_SC3 Solution.zip")}
 #' \dontrun{process_input("WWSIS model.xml")}
 #'
 #' @export
 process_folder <- function(folders = ".", keep.temp = FALSE) {
   # Check inputs
-  assert_that(is.character(folders), is.flag(keep.temp), is_folder(folders))
+  stopifnot(is.character(folders), is.logical(keep.temp), length(keep.temp) == 1L)
+  check_is_folder(folders)
   
   # Check for wildcard
   if (length(folders) == 1L) {
@@ -53,26 +62,18 @@ process_folder <- function(folders = ".", keep.temp = FALSE) {
   }
   
   # Function to list PLEXOS files in each folder
-  plexos_list_files <- function(df, is.xml = TRUE) {
-    filt.str <- ifelse(is.xml, ".xml$|.XML$", ".zip$|.ZIP$")
+  plexos_list_files <- function(df) {
+    filename <- list.files(df$folder, ".xml$|.XML$|.zip$|.ZIP$", full.names = TRUE)
     
-    filename <- list.files(df$folder, filt.str, full.names = TRUE)
-    
-    if (length(filename) == 0L) {
-      return(data.frame())
-    }
-    
-    data.frame(type = ifelse(is.xml, "I", "S"),
-               filename,
-               stringsAsFactors = FALSE)
+    data_frame(type = ifelse(grepl(".xml$|.XML$", filename), "I", "S"),
+               filename)
   }
   
   # Get database file names
   df <- data.frame(folder = folders,
                    stringsAsFactors = FALSE) %>%
     group_by(folder) %>%
-    do(rbind(plexos_list_files(., TRUE),
-             plexos_list_files(., FALSE)))
+    do(plexos_list_files(.))
   
   # Error if all folders were empty
   if (nrow(df) == 0L)

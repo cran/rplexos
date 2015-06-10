@@ -4,7 +4,7 @@
 #' @export
 process_input <- function(file) {
   # Check that inputs are valid
-  assert_that(is.string(file))
+  stopifnot(is.character(file), length(file) == 1L)
   
   # Check that file exists
   if (!file.exists(file)) {
@@ -192,7 +192,8 @@ add_extra_tables_input <- function(db) {
     
     tag.table <- tbl(db, "temp_tag") %>%
       collect %>%
-      reshape2::dcast(data_id ~ class, value.var = "name")
+      tidyr::spread(class, name) %>%
+      as.data.frame
     
     DBI::dbGetQuery(db$con, "DROP VIEW [temp_tag]")
     
@@ -226,7 +227,8 @@ add_extra_tables_input <- function(db) {
       
     text.table <- tbl(db, "temp_text") %>%
       collect %>%
-      reshape2::dcast(data_id ~ class, value.var = "value")
+      tidyr::spread(class, value) %>%
+      as.data.frame
     
     DBI::dbGetQuery(db$con, "DROP VIEW [temp_text]")
     

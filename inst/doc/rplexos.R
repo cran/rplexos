@@ -1,8 +1,9 @@
-## ----, echo = FALSE, message = FALSE------------------------------------------------------------------------------------------------------------------------------------------------------------------
+## ---- echo = FALSE, message = FALSE-------------------------------------------------------------------------------------------------------------------------------------------------------------------
 knitr::opts_chunk$set(collapse = T, comment = "#>", fig.height = 3, fig.width = 7)
 options(width = 200)
 library(rplexos, quietly = TRUE)
-ggplot2::theme_set(ggplot2::theme_bw())
+library(ggplot2, quietly = TRUE)
+theme_set(theme_bw())
 
 ## -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 location <- location_solution_rplexos()
@@ -27,8 +28,6 @@ query_day(db, "Generator", "Generation")
 query_day(db, "Region", "*")
 
 ## -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-library(ggplot2, quietly = TRUE)
-
 gen <- query_interval(db, "Generator", "Generation")
 ggplot(gen, aes(x = time, y = value, fill = name)) +
   geom_area() +
@@ -60,14 +59,13 @@ gen.gral.filter1 <- query_interval(db, "Generator", "Generation",
 ggplot(gen.gral.filter1, aes(x = time, y = value, fill = name)) +
   geom_area() +
   labs(x = "Time", y = "Generation (MW)", fill = "Generator")
-
 gen.gral.filter2 <- query_interval(db, "Generator", "Generation",
                                    filter = list(name = c("Baseload", "Wind")))
 ggplot(gen.gral.filter2, aes(x = time, y = value, fill = name)) +
   geom_area() +
   labs(x = "Time", y = "Generation (MW)", fill = "Generator")
 
-## ----, message = FALSE--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+## ---- message = FALSE---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 location2 <- location_input_rplexos()
 location2
 
