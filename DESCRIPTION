@@ -1,10 +1,10 @@
 Package: rplexos
 Type: Package
 Title: Read and Analyze 'PLEXOS' Solutions
-Version: 1.1.1
-Date: 2015-06-10
+Version: 1.1.4
+Date: 2015-07-28
 Authors@R: c(
-    person("Eduardo", "Ibanez", , "eduardo.ibanez@nrel.gov", c("aut", "cre")),
+    person("Eduardo", "Ibanez", , "edu.ibanez@gmail.com", c("aut", "cre")),
     person("Marcin", "Kalicinski", , "kalita@poczta.onet.pl", "ctb", "for the included RapidXml source"),
     person("National Renewable Energy Laboratory", role = "cph")
     )
@@ -26,10 +26,10 @@ Suggests: knitr, testthat, ggplot2
 LinkingTo: Rcpp (>= 0.11.5)
 VignetteBuilder: knitr
 NeedsCompilation: yes
-Packaged: 2015-06-11 03:30:19 UTC; eibanez
+Packaged: 2015-07-28 21:13:04 UTC; eibanez
 Author: Eduardo Ibanez [aut, cre],
   Marcin Kalicinski [ctb] (for the included RapidXml source),
   National Renewable Energy Laboratory [cph]
-Maintainer: Eduardo Ibanez <eduardo.ibanez@nrel.gov>
+Maintainer: Eduardo Ibanez <edu.ibanez@gmail.com>
 Repository: CRAN
-Date/Publication: 2015-06-11 07:32:59
+Date/Publication: 2015-07-28 23:20:41
