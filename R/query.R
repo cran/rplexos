@@ -254,7 +254,10 @@ query_log_steps <- function(db) {
 #' @param col character. Collection to query
 #' @param prop character vector. Property or properties to query
 #' @param columns character. Data columns to query or aggregate by (defaults to \code{name})
-#' @param time.range POSIXt or character. Range of dates of length 2 (given as date, datetime or character in 'ymdhms' or 'ymd' format)
+#' @param time.range POSIXt or character. Range of dates of length 2 (given as date, datetime or character in 'ymdhms' 
+#'                   or 'ymd' format). The Plexos data is assumed to be in UTC so providing a POSIXt vector in a different
+#'                   timezone might cause conflicts. Character vectors are also converted to the UTC format, so here there
+#'                   is not issue.
 #' @param filter list. Used to filter by data columns (see details)
 #' @param phase integer. PLEXOS optimization phase (1-LT, 2-PASA, 3-MT, 4-ST)
 #' @param multiply.time boolean. When summing interval data, provide the value multiplied by interval duration (See details).
@@ -312,11 +315,11 @@ query_master <- function(db, time, col, prop, columns = "name", time.range = NUL
       time.range2 <- c(NA, NA)
 
       if (inherits(time.range, "character")) {
-        time.range2 <- lubridate::parse_date_time(time.range, c("ymdhms", "ymd"), quiet = TRUE)
+        time.range2 <- lubridate::parse_date_time(time.range, c("ymdHMS", "ymd"), quiet = TRUE)
       }
 
       if(any(is.na(time.range2)))
-        stop("time.range must be POSIXt or character with 'ymdhms' or 'ymd' formats", call. = FALSE)
+        stop("time.range must be POSIXt or character with 'ymdHMS' or 'ymd' formats", call. = FALSE)
     }
 
     # Convert dates to ymdhms format, so that queries work correctly
@@ -432,6 +435,9 @@ query_master_each <- function(db, time, col, prop, columns = "name", time.range 
   thesql <- src_sqlite(db$filename, create = FALSE)
 
   if (!identical(time, "interval")) {
+    # # Process the db on the fly if this is an on the fly db
+    # process_table(db, thesql, paste0('data_',time))
+    
     # Query interval data
     if (identical(prop, "*")) {
       out <- tbl(thesql, time)
@@ -469,6 +475,9 @@ query_master_each <- function(db, time, col, prop, columns = "name", time.range 
       DBI::dbDisconnect(thesql$con)
       return(data.frame())
     }
+    
+    # Process the db on the fly if this is an on the fly db
+    process_table(db, thesql, paste0('data_interval_',t.name$table_name))
 
     # Get max/min time existing in the table to be queried
     #   In case time table has more time stamps than those in the dataset
@@ -534,6 +543,22 @@ query_master_each <- function(db, time, col, prop, columns = "name", time.range 
 
   # Return value
   return(out)
+}
+
+process_table <- function(db, thesql, table_name){
+  is_otf <- collect(tbl(thesql, 'config'), n = Inf) %>% filter(element == 'OTF') %>% .$value %>% as.logical()
+  if(length(is_otf) == 0){
+    is_otf <- F
+  }
+  if(is_otf){
+    otf_tables_done <- collect(tbl(thesql, 'on_the_fly'), n = Inf)
+    
+    # if the queried table is not yet processed, process it now
+    if(!(table_name %in% otf_tables_done$table_name)){
+      file <- db$filename %>% gsub('-rplexos.db','.zip',.)
+      add_data(file, add_tables = table_name, initial = F)
+    }
+  }
 }
 
 
@@ -679,15 +704,43 @@ filter_rplexos <- function(out, filt) {
   if (length(filt) == 0L)
     return(out)
 
-  # Write the condition as text
-  vals <- lapply(filt, function(x)
-    paste0("\"", x, "\"", collapse = ", ")) %>%
-    paste0("c(", ., ")")
-  cons <- ifelse(lapply(filt, length) == 1L, "==", "%in%")
-  cond <- paste(names(filt), cons, vals)
+  # Split in positive and negative filters
+  filt_out <- lapply(filt, function(x){
+    neg <- substr(x, 1, 1)=='-'
+    x <- x[neg]
+    x <- sapply(x, function(y) substr(y,2,nchar(y)+1), USE.NAMES = F) # remove the minus
+    x
+  })
+  filt_out <- filt_out[lapply(filt_out,length)>0] # remove empty categories
 
-  # Apply condition
-  out %>% filter_(.dots = cond)
+  filt_in <- lapply(filt, function(x){
+    pos <- substr(x, 1, 1)!='-'
+    x[pos]
+  })
+  filt_in <- filt_in[lapply(filt_in,length)>0] # remove empty categories
+
+  # Write the condition as text
+  if(length(filt_out)>0){
+    vals_out <- lapply(filt_out, function(x)
+      paste0("\"", x, "\"", collapse = ", ")) %>%
+      paste0("c(", ., ")")
+    cons_out <- ifelse(lapply(filt_out, length) == 1L, "==", "%in%")
+    cond_out <- paste('!(', names(filt_out), cons_out, vals_out, ')')
+    out <- out %>%
+      filter_(.dots = cond_out) # Apply condition
+  }
+
+  if(length(filt_in)>0){
+    vals_in <- lapply(filt_in, function(x)
+      paste0("\"", x, "\"", collapse = ", ")) %>%
+      paste0("c(", ., ")")
+    cons_in <- ifelse(lapply(filt_in, length) == 1L, "==", "%in%")
+    cond_in <- paste(names(filt_in), cons_in, vals_in)
+    out <- out %>%
+      filter_(.dots = cond_in) # Apply condition
+  }
+
+  out
 }
 
 # Dynamically select the columns

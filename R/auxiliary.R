@@ -3,7 +3,7 @@ clean_string <- function(x) {
   gsub(" |&|'|-|\\.", "", x)
 }
 
-
+`%out%` <- Negate(`%in%`)
 
 # Regroup with characters
 group_by_char <- function(x, vars) {
@@ -78,7 +78,21 @@ check_is_folder <- function(x) {
   } else {
     test <- all(file.exists(x)) & all(file.info(x)$isdir, na.rm = FALSE)
   }
-  
+
   if (!test)
     stop(paste0("'folders' must be a vector of existing folders or the wildcard \"*\""), call. = FALSE)
+}
+
+get_times <- function(){
+  c("day", "week", "month", "year")
+}
+
+get_dbtemp_name <- function(file){
+  db.temp <- gsub(".zip", "-temp.db", file)
+  return(db.temp)
+}
+
+get_dbfinal_name <- function(file){
+  db.name <- gsub(".zip", "-rplexos.db", file)
+  return(db.name)
 }
